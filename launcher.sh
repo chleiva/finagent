@@ -50,7 +50,8 @@ show_menu() {
     echo "5. 📈 Start Jupyter notebook"
     echo "6. 🛠️  Setup/Install dependencies"
     echo "7. 📁 Browse available data files"
-    echo "8. ❌ Exit"
+    echo "8. 🗂️  Model artifact management"
+    echo "9. ❌ Exit"
     echo
 }
 
@@ -287,7 +288,7 @@ browse_data() {
 # Main loop
 while true; do
     show_menu
-    read -p "Enter your choice (1-8): " choice
+    read -p "Enter your choice (1-9): " choice
     
     case $choice in
         1)
@@ -317,6 +318,9 @@ while true; do
             browse_data
             ;;
         8)
+            model_management_menu
+            ;;
+        9)
             print_color "👋 Goodbye!" $GREEN
             exit 0
             ;;
@@ -329,3 +333,70 @@ while true; do
     echo
     read -p "Press Enter to return to main menu..."
 done
+
+# Function for model management menu
+model_management_menu() {
+    while true; do
+        print_color "🗂️  Model Artifact Management" $BLUE
+        print_color "=============================" $BLUE
+        echo
+        echo "1. 📋 List all saved models"
+        echo "2. 🔍 Find models by description"
+        echo "3. 📊 Show model details"
+        echo "4. 🗑️  Clean old models"
+        echo "5. 📁 Browse artifact directories"
+        echo "6. ↩️  Back to main menu"
+        echo
+        read -p "Enter your choice (1-6): " model_choice
+        
+        case $model_choice in
+            1)
+                check_venv
+                python src/utils/model_manager.py list
+                ;;
+            2)
+                check_venv
+                echo "Enter keywords to search for (e.g., AAPL 2024):"
+                read -p "Keywords: " keywords
+                if [ ! -z "$keywords" ]; then
+                    python src/utils/model_manager.py find --keywords $keywords
+                fi
+                ;;
+            3)
+                check_venv
+                echo "Enter model ID to show details:"
+                read -p "Model ID: " model_id
+                if [ ! -z "$model_id" ]; then
+                    python src/utils/model_manager.py show --model-id "$model_id"
+                fi
+                ;;
+            4)
+                check_venv
+                echo "Enter number of days old for cleaning (default 30):"
+                read -p "Days: " days
+                if [ -z "$days" ]; then
+                    days=30
+                fi
+                python src/utils/model_manager.py clean --days $days
+                ;;
+            5)
+                if [ -d "model_artifacts" ]; then
+                    print_color "📁 Model Artifacts Directory Structure:" $CYAN
+                    tree model_artifacts -L 2 2>/dev/null || ls -la model_artifacts/
+                else
+                    print_color "❌ No model artifacts directory found." $RED
+                fi
+                ;;
+            6)
+                return
+                ;;
+            *)
+                print_color "❌ Invalid choice. Please try again." $RED
+                sleep 2
+                ;;
+        esac
+        
+        echo
+        read -p "Press Enter to continue..."
+    done
+}

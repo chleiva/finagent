@@ -333,6 +333,206 @@ def get_model_description():
         else:
             print("❌ Description cannot be empty. Please try again.")
 
+def create_model_artifact_directory(model_description, date_str):
+    """
+    Create organized directory structure for model artifacts
+    """
+    # Create safe directory name from description
+    safe_description = "".join(c for c in model_description if c.isalnum() or c in (' ', '-', '_')).rstrip()
+    safe_description = safe_description.replace(' ', '_')
+    
+    # Create timestamp for uniqueness
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    # Create directory name
+    dir_name = f"{timestamp}_{safe_description}"
+    
+    # Create main artifacts directory
+    artifacts_base = "model_artifacts"
+    os.makedirs(artifacts_base, exist_ok=True)
+    
+    # Create specific model directory
+    model_dir = os.path.join(artifacts_base, dir_name)
+    os.makedirs(model_dir, exist_ok=True)
+    
+    # Create subdirectories
+    subdirs = ['models', 'evaluation', 'data', 'config', 'plots']
+    for subdir in subdirs:
+        os.makedirs(os.path.join(model_dir, subdir), exist_ok=True)
+    
+    return model_dir, dir_name
+
+def save_model_artifacts(model_dir, model_description, evaluation_results, training_file, test_file, 
+                        num_features, num_samples, duration_seconds, fast_mode):
+    """
+    Save all model artifacts in organized structure
+    """
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # 1. Save model files
+    models_dir = os.path.join(model_dir, 'models')
+    
+    # Copy model package
+    if os.path.exists('trained_model/model_package.pkl'):
+        import shutil
+        shutil.copy2('trained_model/model_package.pkl', 
+                    os.path.join(models_dir, 'model_package.pkl'))
+    
+    # Copy Optuna study
+    if os.path.exists('trained_model/optuna_study.pkl'):
+        import shutil
+        shutil.copy2('trained_model/optuna_study.pkl', 
+                    os.path.join(models_dir, 'optuna_study.pkl'))
+    
+    # 2. Save evaluation results
+    eval_dir = os.path.join(model_dir, 'evaluation')
+    
+    # Copy evaluation files
+    eval_files = [
+        'evaluation_results/test_auc_comparison.csv',
+        'evaluation_results/trading_strategies.csv',
+        'evaluation_results/feature_importance_analysis.csv',
+        'evaluation_results/roc_curves.png'
+    ]
+    
+    for file_path in eval_files:
+        if os.path.exists(file_path):
+            import shutil
+            filename = os.path.basename(file_path)
+            shutil.copy2(file_path, os.path.join(eval_dir, filename))
+    
+    # 3. Save data info
+    data_dir = os.path.join(model_dir, 'data')
+    
+    # Create data summary
+    data_summary = {
+        'training_file': training_file,
+        'test_file': test_file,
+        'num_features': num_features,
+        'num_samples': num_samples,
+        'data_preparation_date': timestamp
+    }
+    
+    pd.DataFrame([data_summary]).to_csv(
+        os.path.join(data_dir, 'data_summary.csv'), index=False
+    )
+    
+    # 4. Save configuration
+    config_dir = os.path.join(model_dir, 'config')
+    
+    config_info = {
+        'model_description': model_description,
+        'training_date': timestamp,
+        'fast_mode': fast_mode,
+        'duration_seconds': duration_seconds,
+        'best_model': evaluation_results.get('best_model', 'None') if evaluation_results else 'None',
+        'test_auc': evaluation_results.get('test_auc', 0.0) if evaluation_results else 0.0,
+        'test_f1': evaluation_results.get('test_f1', 0.0) if evaluation_results else 0.0,
+        'best_threshold': evaluation_results.get('best_threshold', 0.0) if evaluation_results else 0.0,
+        'best_precision': evaluation_results.get('best_precision', 0.0) if evaluation_results else 0.0,
+        'best_signals': evaluation_results.get('best_signals', 0) if evaluation_results else 0,
+        'best_expected_value': evaluation_results.get('best_expected_value', 0.0) if evaluation_results else 0.0
+    }
+    
+    pd.DataFrame([config_info]).to_csv(
+        os.path.join(config_dir, 'model_config.csv'), index=False
+    )
+    
+    # 5. Create model index entry
+    create_model_index_entry(model_dir, model_description, timestamp, evaluation_results)
+    
+    return model_dir
+
+def create_model_index_entry(model_dir, model_description, timestamp, evaluation_results):
+    """
+    Create/update index of all model artifacts for easy retrieval
+    """
+    index_file = "model_artifacts/model_index.csv"
+    
+    # Create index directory if it doesn't exist
+    os.makedirs("model_artifacts", exist_ok=True)
+    
+    # Prepare index entry
+    index_entry = {
+        'model_id': os.path.basename(model_dir),
+        'description': model_description,
+        'date_created': timestamp,
+        'artifact_path': model_dir,
+        'best_model': evaluation_results.get('best_model', 'None') if evaluation_results else 'None',
+        'test_auc': evaluation_results.get('test_auc', 0.0) if evaluation_results else 0.0,
+        'test_f1': evaluation_results.get('test_f1', 0.0) if evaluation_results else 0.0,
+        'best_precision': evaluation_results.get('best_precision', 0.0) if evaluation_results else 0.0,
+        'best_signals': evaluation_results.get('best_signals', 0) if evaluation_results else 0,
+        'top_feature_1': evaluation_results.get('top_feature_1', 'None') if evaluation_results else 'None',
+        'top_feature_2': evaluation_results.get('top_feature_2', 'None') if evaluation_results else 'None',
+        'top_feature_3': evaluation_results.get('top_feature_3', 'None') if evaluation_results else 'None'
+    }
+    
+    # Load existing index or create new one
+    if os.path.exists(index_file):
+        index_df = pd.read_csv(index_file)
+    else:
+        index_df = pd.DataFrame()
+    
+    # Add new entry
+    index_df = pd.concat([index_df, pd.DataFrame([index_entry])], ignore_index=True)
+    
+    # Save updated index
+    index_df.to_csv(index_file, index=False)
+    
+    print(f"📁 Model artifacts saved to: {model_dir}")
+    print(f"📋 Model indexed in: {index_file}")
+
+def find_model_by_description(description_keywords):
+    """
+    Find model artifacts by description keywords
+    """
+    index_file = "model_artifacts/model_index.csv"
+    
+    if not os.path.exists(index_file):
+        print("❌ No model index found. No models have been saved yet.")
+        return []
+    
+    index_df = pd.read_csv(index_file)
+    
+    # Search by keywords
+    matching_models = []
+    for _, row in index_df.iterrows():
+        if any(keyword.lower() in row['description'].lower() for keyword in description_keywords):
+            matching_models.append(row)
+    
+    return matching_models
+
+def list_all_models():
+    """
+    List all saved models with their details
+    """
+    index_file = "model_artifacts/model_index.csv"
+    
+    if not os.path.exists(index_file):
+        print("❌ No model index found. No models have been saved yet.")
+        return
+    
+    index_df = pd.read_csv(index_file)
+    
+    if index_df.empty:
+        print("❌ No models found in index.")
+        return
+    
+    print(f"\n📋 Found {len(index_df)} saved models:")
+    print("=" * 80)
+    
+    for i, (_, row) in enumerate(index_df.iterrows(), 1):
+        print(f"\n{i}. 🆔 {row['model_id']}")
+        print(f"   📝 Description: {row['description']}")
+        print(f"   📅 Date: {row['date_created']}")
+        print(f"   🤖 Best Model: {row['best_model']}")
+        print(f"   📊 Test AUC: {row['test_auc']:.4f}")
+        print(f"   🎯 Test F1: {row['test_f1']:.4f}")
+        print(f"   📈 Best Precision: {row['best_precision']:.1%}")
+        print(f"   📁 Path: {row['artifact_path']}")
+        print("-" * 80)
+
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='M3-optimized ML pipeline for trading data')
@@ -387,6 +587,21 @@ if __name__ == "__main__":
         # Extract evaluation results
         evaluation_results = extract_evaluation_results()
         
+        # Create and save model artifacts
+        print("\n=== [4/4] SAVING MODEL ARTIFACTS ===")
+        model_dir, model_id = create_model_artifact_directory(model_description, datetime.datetime.now().strftime('%Y-%m-%d'))
+        save_model_artifacts(
+            model_dir=model_dir,
+            model_description=model_description,
+            evaluation_results=evaluation_results,
+            training_file=args.input_csv,
+            test_file=args.test_csv,
+            num_features=num_features,
+            num_samples=num_samples,
+            duration_seconds=time.time() - start_time,
+            fast_mode=args.fast
+        )
+        
     except Exception as e:
         error_message = str(e)
         print(f"\n❌ Pipeline failed with error: {error_message}")
@@ -410,5 +625,7 @@ if __name__ == "__main__":
     if error_message is None:
         print("\n✅ Pipeline completed successfully!")
         print(f"⏱️ Total duration: {duration_seconds:.2f} seconds")
+        print(f"📁 Model artifacts saved with ID: {model_id}")
+        print(f"🔍 Use 'find_model_by_description()' to locate your model later")
     else:
         print(f"\n❌ Pipeline failed after {duration_seconds:.2f} seconds")
