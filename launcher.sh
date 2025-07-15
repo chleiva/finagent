@@ -286,58 +286,6 @@ browse_data() {
     read -p "Press Enter to continue..."
 }
 
-# Main loop
-while true; do
-    show_menu
-    read -p "Enter your choice (1-10): " choice
-    
-    case $choice in
-        1)
-            check_venv
-            train_model
-            ;;
-        2)
-            check_venv
-            launch_dashboard
-            ;;
-        3)
-            check_venv
-            view_log
-            ;;
-        4)
-            check_venv
-            interactive_comparison
-            ;;
-        5)
-            check_venv
-            start_jupyter
-            ;;
-        6)
-            setup_dependencies
-            ;;
-        7)
-            browse_data
-            ;;
-        8)
-            model_management_menu
-            ;;
-        9)
-            show_quick_reference
-            ;;
-        10)
-            print_color "👋 Goodbye!" $GREEN
-            exit 0
-            ;;
-        *)
-            print_color "❌ Invalid choice. Please try again." $RED
-            sleep 2
-            ;;
-    esac
-    
-    echo
-    read -p "Press Enter to return to main menu..."
-done
-
 # Function for model management menu
 model_management_menu() {
     while true; do
@@ -408,16 +356,69 @@ model_management_menu() {
 # Function to show quick reference
 show_quick_reference() {
     clear
-    print_color "📖 QUICK REFERENCE - Available Commands" $PURPLE
-    print_color "=======================================" $PURPLE
+    print_color "📖 QUICK REFERENCE - Key Commands" $PURPLE
+    print_color "================================" $PURPLE
     echo
     
-    print_color "🚀 MODEL TRAINING:" $BLUE
+    print_color "🔄 DATA CONCATENATION (concatenate_all.py):" $BLUE
+    echo "  # Basic usage - concatenate all available data"
+    echo "  python src/data_processing/concatenate_all.py"
+    echo
+    echo "  # Concatenate specific symbols"
+    echo "  python src/data_processing/concatenate_all.py --symbols AAPL,MSFT,GOOGL"
+    echo
+    echo "  # Specify output file"
+    echo "  python src/data_processing/concatenate_all.py --output my_training_data.csv"
+    echo
+    echo "  # Full example with all options"
+    echo "  python src/data_processing/concatenate_all.py --symbols AAPL,MSFT --output combined_data.csv --verbose"
+    echo
+    echo "  ARGUMENTS:"
+    echo "    --symbols: Comma-separated list of stock symbols (default: all available)"
+    echo "    --output: Output CSV filename (default: concatenated_data.csv)"
+    echo "    --verbose: Show detailed progress information"
+    echo "    --help: Show all available options"
+    echo
+    
+    print_color "🚀 MODEL TRAINING LAUNCHER (trading_model_launcher.py):" $BLUE
+    echo "  # Interactive mode (no arguments needed)"
+    echo "  python src/launchers/trading_model_launcher.py"
+    echo
+    echo "  # Command line mode - specific stocks and time period"
+    echo "  python src/launchers/trading_model_launcher.py --stocks AAPL,MSFT --year 2024 --month 7"
+    echo
+    echo "  # Quick mode (all stocks, all time, fast training)"
+    echo "  python src/launchers/trading_model_launcher.py --quick --description \"Full dataset training\""
+    echo
+    echo "  # Fast mode for testing"
+    echo "  python src/launchers/trading_model_launcher.py --stocks AAPL --year 2025 --fast --description \"Quick test\""
+    echo
+    echo "  ARGUMENTS:"
+    echo "    --stocks: Comma-separated list of stock symbols (e.g., AAPL,MSFT,GOOGL)"
+    echo "    --year: Year for data (e.g., 2024, 2025)"
+    echo "    --month: Month for data (1-12, or 01-12)"
+    echo "    --description: Model description for identification"
+    echo "    --quick: Use all available data with fast training"
+    echo "    --fast: Enable fast mode (reduced optimization for debugging)"
+    echo "    --help: Show all available options"
+    echo
+    
+    print_color "🎯 DIRECT MODEL TRAINING (model_training_15Jul_optimized1M.py):" $BLUE
     echo "  # Train with specific data file"
-    echo "  python src/model_training/model_training_15Jul_optimized1M.py data/raw/monthly_AAPL_2025-01.csv --description \"AAPL January 2025\" --fast"
+    echo "  python src/model_training/model_training_15Jul_optimized1M.py data/raw/monthly_AAPL_2025-01.csv --description \"AAPL January 2025\""
     echo
     echo "  # Train with test data"
     echo "  python src/model_training/model_training_15Jul_optimized1M.py data/raw/monthly_AAPL_2025-01.csv --test-csv data/raw/monthly_AAPL_2025-02.csv --description \"AAPL with test data\""
+    echo
+    echo "  # Fast mode for quick testing"
+    echo "  python src/model_training/model_training_15Jul_optimized1M.py data/raw/monthly_AAPL_2025-01.csv --description \"Quick test\" --fast"
+    echo
+    echo "  ARGUMENTS:"
+    echo "    input_csv: Path to training data file (required)"
+    echo "    --description: Model description for identification (required)"
+    echo "    --test-csv: Path to test data file (optional)"
+    echo "    --fast: Enable fast mode (reduced optimization)"
+    echo "    --help: Show all available options"
     echo
     
     print_color "📊 DASHBOARD & MONITORING:" $BLUE
@@ -427,9 +428,6 @@ show_quick_reference() {
     echo "  # View training log"
     echo "  python src/utils/view_model_log.py"
     echo
-    echo "  # Interactive model comparison"
-    echo "  python src/evaluation/model_comparison_tool.py"
-    echo
     
     print_color "🗂️ MODEL MANAGEMENT:" $BLUE
     echo "  # List all saved models"
@@ -438,58 +436,21 @@ show_quick_reference() {
     echo "  # Find models by description"
     echo "  python src/utils/model_manager.py find --keywords AAPL 2024"
     echo
-    echo "  # Show model details"
-    echo "  python src/utils/model_manager.py show --model-id 20241215_143022_AAPL_January_2025"
-    echo
-    echo "  # Clean old models (older than 30 days)"
-    echo "  python src/utils/model_manager.py clean --days 30"
-    echo
     
-    print_color "📈 DEVELOPMENT:" $BLUE
-    echo "  # Start Jupyter notebook"
-    echo "  jupyter notebook --notebook-dir=notebooks/"
-    echo
-    echo "  # Activate virtual environment"
-    echo "  source venv/bin/activate"
-    echo
-    echo "  # Install dependencies"
-    echo "  pip install -r config/requirements.txt"
-    echo
-    
-    print_color "🛠️ UTILITIES:" $BLUE
-    echo "  # Data processing"
-    echo "  python src/data_processing/concatenate_all.py --symbols AAPL,MSFT --output training_data.csv"
-    echo
-    echo "  # Model evaluation"
-    echo "  python src/evaluation/evaluate.py"
-    echo
-    echo "  # Makefile commands"
-    echo "  make train          # Train model"
-    echo "  make dashboard      # Launch dashboard"
-    echo "  make setup          # Setup environment"
-    echo
-    
-    print_color "📁 IMPORTANT FILES:" $BLUE
-    echo "  📊 model_training_log.csv          # Training history"
-    echo "  📋 model_artifacts/model_index.csv # Model index"
-    echo "  📁 model_artifacts/                # All saved models"
-    echo "  📁 data/raw/                       # Raw data files"
-    echo "  📁 evaluation_results/             # Evaluation outputs"
-    echo
-    
-    print_color "💡 TIPS:" $GREEN
-    echo "  • Always activate virtual environment: source venv/bin/activate"
-    echo "  • Use --fast flag for quick testing"
+    print_color "💡 ESSENTIAL TIPS:" $GREEN
+    echo "  • Always activate virtual environment first: source venv/bin/activate"
     echo "  • Use descriptive model descriptions for easy finding"
+    echo "  • Use --fast flag for quick testing and debugging"
     echo "  • Check dashboard for real-time training monitoring"
     echo "  • Use model manager to find and organize your models"
     echo
     
-    print_color "🎯 NEXT STEPS:" $YELLOW
-    echo "  1. Activate virtual environment: source venv/bin/activate"
-    echo "  2. Train a model: python src/model_training/model_training_15Jul_optimized1M.py data/raw/monthly_AAPL_2025-01.csv --description \"My first model\""
-    echo "  3. View results: streamlit run src/evaluation/streamlit_model_dashboard.py"
-    echo "  4. Find your model: python src/utils/model_manager.py list"
+    print_color "🎯 TYPICAL WORKFLOW:" $YELLOW
+    echo "  1. Activate environment: source venv/bin/activate"
+    echo "  2. Concatenate data: python src/data_processing/concatenate_all.py --symbols AAPL,MSFT"
+    echo "  3. Train model: python src/launchers/trading_model_launcher.py --stocks AAPL --year 2025 --description \"My model\""
+    echo "  4. View results: streamlit run src/evaluation/streamlit_model_dashboard.py"
+    echo "  5. Find your model: python src/utils/model_manager.py list"
     echo
     
     print_color "✅ Quick reference complete! You can now run commands manually." $GREEN
@@ -497,3 +458,55 @@ show_quick_reference() {
     print_color "👋 Exiting launcher..." $CYAN
     exit 0
 }
+
+# Main loop
+while true; do
+    show_menu
+    read -p "Enter your choice (1-10): " choice
+    
+    case $choice in
+        1)
+            check_venv
+            train_model
+            ;;
+        2)
+            check_venv
+            launch_dashboard
+            ;;
+        3)
+            check_venv
+            view_log
+            ;;
+        4)
+            check_venv
+            interactive_comparison
+            ;;
+        5)
+            check_venv
+            start_jupyter
+            ;;
+        6)
+            setup_dependencies
+            ;;
+        7)
+            browse_data
+            ;;
+        8)
+            model_management_menu
+            ;;
+        9)
+            show_quick_reference
+            ;;
+        10)
+            print_color "👋 Goodbye!" $GREEN
+            exit 0
+            ;;
+        *)
+            print_color "❌ Invalid choice. Please try again." $RED
+            sleep 2
+            ;;
+    esac
+    
+    echo
+    read -p "Press Enter to return to main menu..."
+done
