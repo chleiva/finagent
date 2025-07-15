@@ -231,7 +231,14 @@ dmypy.json
 experiment/
 
 # Large data files (excluded due to size)
-# Large CSV files (>50MB)
+# Raw data files (monthly CSV files, bids, daily data)
+data/raw/*.csv
+data/raw/monthly_*.csv
+data/raw/bids_*.csv
+data/raw/daily.csv
+data/raw/intraday.csv
+
+# Legacy paths (for reference)
 code/data/*.csv
 code/notebooks/*.csv
 code/data/raw/*.zip
