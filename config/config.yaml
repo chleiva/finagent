@@ -1,0 +1,63 @@
+# Trading Model Launcher Configuration
+
+# Data Configuration
+data:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  external_dir: "data/external"
+  default_symbols: ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]
+  default_year: 2024
+  default_month: 7
+
+# Model Configuration
+model:
+  saved_dir: "models/saved"
+  checkpoints_dir: "models/checkpoints"
+  default_model: "xgboost"
+  ensemble_models: true
+  hyperparameter_tuning: true
+
+# Training Configuration
+training:
+  random_seed: 42
+  test_size: 0.2
+  validation_size: 0.1
+  batch_size: 32
+  epochs: 100
+  learning_rate: 0.001
+  early_stopping_patience: 10
+
+# Feature Engineering
+features:
+  window_size: 20
+  target_window: 5
+  min_features: 10
+  max_features: 100
+  feature_selection_method: "mutual_info"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  dir: "logs"
+  file: "logs/app.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Evaluation Configuration
+evaluation:
+  metrics: ["accuracy", "precision", "recall", "f1", "roc_auc"]
+  cross_validation_folds: 5
+  save_predictions: true
+  plot_results: true
+
+# Launcher Configuration
+launcher:
+  interactive_mode: true
+  default_output: "training_dataset.csv"
+  progress_bar: true
+  verbose: false
+
+# Development Configuration
+development:
+  debug: false
+  environment: "development"
+  enable_profiling: false 
