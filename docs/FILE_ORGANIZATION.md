@@ -33,7 +33,7 @@ src/
 - **`feature_optimizer.py`** - Feature optimization and selection
 
 ### **Model Training** (`src/model_training/`)
-- **`model_training_15Jul_optimized1M.py`** - **MAIN TRAINING SCRIPT** (optimized for 1M data)
+- **`model_training_15Jul_optimized1M.py`** - **MAIN TRAINING SCRIPT** (self-contained with embedded train_model function)
 
 ### **Deprecated Model Training** (`src/deprecated/model_training/`)
 - **`model_training_14Jul.py`** - Standard training script (archived)
