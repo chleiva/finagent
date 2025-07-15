@@ -42,20 +42,21 @@ run-launcher: ## Run the trading model launcher
 	python src/launchers/trading_model_launcher.py
 
 setup: ## Initial setup of the project
-	pip install -r config/requirements.txt
-	pip install -e ".[dev]"
+	python3 -m venv venv
+	. venv/bin/activate && pip install -r config/requirements.txt
+	. venv/bin/activate && pip install -e ".[dev]"
 
 data-prep: ## Prepare training data
 	python src/data_processing/concatenate_all.py
 
 train: ## Train a model (optimized 1M - main training script)
-	python src/model_training/model_training_15Jul_optimized1M.py
+	. venv/bin/activate && python src/model_training/model_training_15Jul_optimized1M.py
 
 evaluate: ## Evaluate models
-	python src/evaluation/evaluate.py
+	. venv/bin/activate && python src/evaluation/evaluate.py
 
 jupyter: ## Start Jupyter notebook server
-	jupyter notebook --notebook-dir=notebooks/
+	. venv/bin/activate && jupyter notebook --notebook-dir=notebooks/
 
 docs: ## Generate documentation
 	cd docs && make html

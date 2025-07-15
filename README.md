@@ -5,14 +5,14 @@ A comprehensive machine learning pipeline for trading model development, trainin
 ## 🚀 Quick Start
 
 ```bash
-# Install dependencies
-pip install -r config/requirements.txt
+# Setup virtual environment and install dependencies
+make setup
 
-# Run the trading model launcher
-python src/launchers/trading_model_launcher.py
+# Run the main training pipeline
+make train
 
-# Or use the demo
-python src/launchers/demo_launcher.py
+# Or use the convenience script
+./scripts/run_training.sh
 ```
 
 ## 📁 Project Structure
