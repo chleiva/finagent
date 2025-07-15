@@ -48,14 +48,8 @@ setup: ## Initial setup of the project
 data-prep: ## Prepare training data
 	python src/data_processing/concatenate_all.py
 
-train: ## Train a model (optimized 1M)
+train: ## Train a model (optimized 1M - main training script)
 	python src/model_training/model_training_15Jul_optimized1M.py
-
-train-balanced: ## Train a model with class balancing
-	python src/model_training/model_training_14Jul_removing_dominant_class.py
-
-train-standard: ## Train a model (standard)
-	python src/model_training/model_training_14Jul.py
 
 evaluate: ## Evaluate models
 	python src/evaluation/evaluate.py

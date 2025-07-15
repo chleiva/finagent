@@ -34,10 +34,12 @@ src/
 
 ### **Model Training** (`src/model_training/`)
 - **`model_training_15Jul_optimized1M.py`** - **MAIN TRAINING SCRIPT** (optimized for 1M data)
-- **`model_training_14Jul.py`** - Standard training script
-- **`model_training_14Jul_removing_dominant_class.py`** - Training with class balancing
-- **`model_training_good_14Jul.py`** - Alternative training approach
-- **`train.py`** - Generic training script
+
+### **Deprecated Model Training** (`src/deprecated/model_training/`)
+- **`model_training_14Jul.py`** - Standard training script (archived)
+- **`model_training_14Jul_removing_dominant_class.py`** - Training with class balancing (archived)
+- **`model_training_good_14Jul.py`** - Alternative training approach (archived)
+- **`train.py`** - Generic training script (archived)
 
 ### **Evaluation** (`src/evaluation/`)
 - **`evaluate.py`** - Model evaluation and metrics calculation
@@ -68,8 +70,7 @@ src/
 - `src/feature_engineering/feature_optimizer.py` - Feature optimization
 
 ### **For Model Training:**
-- `src/model_training/model_training_15Jul_optimized1M.py` - **Recommended**
-- `src/model_training/model_training_14Jul_removing_dominant_class.py` - For imbalanced data
+- `src/model_training/model_training_15Jul_optimized1M.py` - **Main training script**
 
 ### **For Evaluation:**
 - `src/evaluation/evaluate.py` - Model evaluation
@@ -85,9 +86,9 @@ src/
 - `stock_minute_processor_parallel.py` - Real-time processing
 
 ### **🔄 Alternative Versions:**
-- `model_training_14Jul.py` - Standard training
-- `model_training_14Jul_removing_dominant_class.py` - Class balancing
-- `model_training_good_14Jul.py` - Alternative approach
+- `src/deprecated/model_training/model_training_14Jul.py` - Standard training (archived)
+- `src/deprecated/model_training/model_training_14Jul_removing_dominant_class.py` - Class balancing (archived)
+- `src/deprecated/model_training/model_training_good_14Jul.py` - Alternative approach (archived)
 
 ### **📚 Reference/Historical:**
 - `features_old_13Jul.py` - Legacy features
