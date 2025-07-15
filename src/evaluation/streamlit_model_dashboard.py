@@ -11,7 +11,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -51,10 +52,30 @@ st.markdown("""
     .stDataFrame {
         font-size: 0.9rem;
     }
+    .refresh-info {
+        background-color: #e8f4fd;
+        padding: 0.5rem;
+        border-radius: 0.3rem;
+        border-left: 3px solid #1f77b4;
+        margin-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data
+# Auto-refresh functionality
+def setup_auto_refresh():
+    """Setup auto-refresh every minute"""
+    # Add JavaScript for auto-refresh
+    st.markdown("""
+    <script>
+        // Auto-refresh every 60 seconds
+        setTimeout(function(){
+            window.location.reload();
+        }, 60000);
+    </script>
+    """, unsafe_allow_html=True)
+
+@st.cache_data(ttl=60)  # Cache for 60 seconds
 def load_model_log(log_file="model_training_log.csv"):
     """Load and preprocess the model training log"""
     if not os.path.exists(log_file):
@@ -75,13 +96,51 @@ def load_model_log(log_file="model_training_log.csv"):
     return df
 
 def main():
-    # Header
-    st.markdown('<h1 class="main-header">🤖 Model Training Dashboard</h1>', unsafe_allow_html=True)
+    # Setup auto-refresh
+    setup_auto_refresh()
+    
+    # Initialize session state for refresh tracking
+    if 'last_refresh' not in st.session_state:
+        st.session_state.last_refresh = datetime.now()
+    
+    # Calculate time until next refresh
+    time_since_refresh = datetime.now() - st.session_state.last_refresh
+    seconds_until_refresh = max(0, 60 - time_since_refresh.seconds)
+    
+    # Header with refresh controls
+    col1, col2, col3 = st.columns([3, 1, 1])
+    
+    with col1:
+        st.markdown('<h1 class="main-header">🤖 Model Training Dashboard</h1>', unsafe_allow_html=True)
+    
+    with col2:
+        if st.button("🔄 Refresh Now", type="primary"):
+            st.session_state.last_refresh = datetime.now()
+            st.rerun()
+    
+    with col3:
+        st.markdown(f"""
+        <div class="refresh-info">
+            <small>🕐 Last updated: {st.session_state.last_refresh.strftime('%H:%M:%S')}</small><br>
+            <small>🔄 Auto-refresh: {seconds_until_refresh}s</small>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Load data
     df = load_model_log()
     if df is None:
         st.stop()
+    
+    # Check for recent runs (last 5 minutes)
+    if not df.empty:
+        recent_cutoff = datetime.now() - timedelta(minutes=5)
+        recent_runs = df[df['Date_Start'] > recent_cutoff]
+        
+        if not recent_runs.empty:
+            st.success(f"🎉 **New runs detected!** {len(recent_runs)} new training runs in the last 5 minutes.")
+            for _, run in recent_runs.iterrows():
+                status_icon = "✅" if run['Status'] == 'Success' else "❌"
+                st.info(f"{status_icon} **{run['Model_Description']}** - {run['Date_Start'].strftime('%H:%M:%S')} - AUC: {run.get('Test_AUC', 'N/A')}")
     
     # Sidebar
     st.sidebar.title("📊 Dashboard Controls")
