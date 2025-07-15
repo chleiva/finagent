@@ -11,6 +11,9 @@ import joblib
 from pathlib import Path
 import numpy as np # Added for np.argmax
 
+# Add src directory to Python path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
+
 # Import the main functions from the modular scripts
 from data_processing.prepare import prepare_data
 from evaluation.evaluate import evaluate_model
