@@ -1,0 +1,246 @@
+# =======================
+# PYTHON AND ENVIRONMENTS
+# =======================
+
+# Python bytecode/cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Build & dist
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Packaging
+*.manifest
+*.spec
+
+# =====================
+# JUPYTER NOTEBOOK
+# =====================
+
+.ipynb_checkpoints/
+
+# =====================
+# ENVIRONMENT VARIABLES
+# =====================
+
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# =====================
+# IDE / EDITORS
+# =====================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# =====================
+# OS GENERATED FILES
+# =====================
+
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# =====================
+# LOGS AND DEBUG
+# =====================
+
+*.log
+logs/
+debug_*.py
+test_*.py
+
+# =====================
+# SENSITIVE FILES
+# =====================
+
+api_keys.txt
+secrets.json
+config.ini
+*.key
+config.json
+mobile_alerts_config.py
+twilio_config.json
+firebase_credentials.json
+
+# =====================
+# DATA & MODELS
+# =====================
+
+# General data files
+data/*.csv
+data/*.db
+data/*.json
+*.csv
+
+# Model files
+models/*.pkl
+models/*.joblib
+models/*.h5
+models/*.pth
+*.pkl
+*.joblib
+*.model
+*.weights
+*.checkpoint
+model_artifacts/
+
+# Intermediate/processed data
+processed_data/
+temp_data/
+intermediate_*.csv
+feature_*.csv
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+src/market_data.db
+
+# Cache
+stock_cache/
+stock_cache/*.json
+market_data_cache/
+real_time_cache/
+
+# Reports
+reports/*.html
+reports/*.csv
+reports/*.json
+performance_*.csv
+backtest_*.html
+trading_*.log
+
+# Trading signals
+signals_cache/
+signal_*.json
+
+# Snapshots
+portfolio_*.json
+snapshot_*.csv
+
+# =====================
+# TEMPORARY / BACKUPS
+# =====================
+
+*.tmp
+*.temp
+temp/
+tmp/
+*.bak
+*.backup
+
+# =====================
+# TESTING / COVERAGE
+# =====================
+
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# =====================
+# DJANGO / FLASK / OTHER
+# =====================
+
+# Django
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask
+instance/
+.webassets-cache
+
+# Scrapy
+.scrapy
+
+# Sage
+*.sage.py
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Rope
+.ropeproject
+
+# MkDocs
+/site
+
+# Mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# Streamlit
+.streamlit/
+
+# =====================
+# ARCHIVES / DEPRECATED / EXPERIMENTS
+# =====================
+
+# Uncomment if needed
+# archive/
+# deprecation/
+experiment/
+
+# Large data files (excluded due to size)
+# Large CSV files (>50MB)
+code/data/*.csv
+code/notebooks/*.csv
+code/data/raw/*.zip
+code/data/local_data_debug/*.csv
+
+# Model files and large artifacts
+*.pkl
+*.joblib
+*.h5
+*.model
+*.weights
+*.checkpoint
