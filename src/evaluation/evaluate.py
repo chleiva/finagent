@@ -255,6 +255,7 @@ def evaluate_model(model_package_path="trained_model/model_package.pkl", prepare
             tn = ((predictions == 0) & (y_test == 0)).sum()
             precision = tp / (tp + fp) if (tp + fp) > 0 else 0
             recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+            accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
             f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
             hit_rate = precision
             expected_value = hit_rate * 1.0 - (1 - hit_rate) * 1.0
@@ -263,6 +264,7 @@ def evaluate_model(model_package_path="trained_model/model_package.pkl", prepare
                 'Signals': predictions.sum(),
                 'Precision': precision,
                 'Recall': recall,
+                'Accuracy': accuracy,
                 'F1': f1,
                 'Hit_Rate': hit_rate,
                 'Expected_Value': expected_value

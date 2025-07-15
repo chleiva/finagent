@@ -265,6 +265,8 @@ def extract_evaluation_results(output_dir="evaluation_results"):
                 best_f1_row = strategy_df.loc[strategy_df['F1'].idxmax()]
                 results['best_threshold'] = best_f1_row['Threshold']
                 results['test_f1'] = best_f1_row['F1']
+                results['test_recall'] = best_f1_row['Recall']  # Extract recall
+                results['test_accuracy'] = best_f1_row['Accuracy']  # Extract accuracy
                 results['best_signals'] = best_f1_row['Signals']
                 
                 # Best expected value
@@ -276,6 +278,7 @@ def extract_evaluation_results(output_dir="evaluation_results"):
                 if not high_signal_df.empty:
                     best_precision_row = high_signal_df.loc[high_signal_df['Precision'].idxmax()]
                     results['best_precision'] = best_precision_row['Precision']
+                    results['test_precision'] = best_precision_row['Precision']  # Extract precision
         
         # Load feature importance analysis
         feature_file = os.path.join(output_dir, 'feature_importance_analysis.csv')
