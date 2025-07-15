@@ -89,3 +89,14 @@ view-logs: ## View application logs
 
 clear-logs: ## Clear log files
 	rm -f logs/*.log
+
+# Dashboard
+dashboard: ## Launch the interactive Streamlit dashboard
+	. venv/bin/activate && streamlit run src/evaluation/streamlit_model_dashboard.py
+
+install-dashboard: ## Install dashboard dependencies
+	. venv/bin/activate && pip install streamlit plotly
+
+setup-dashboard: install-dashboard ## Setup dashboard environment
+	@echo "✅ Dashboard dependencies installed"
+	@echo "🚀 Run 'make dashboard' to launch the interactive dashboard"
