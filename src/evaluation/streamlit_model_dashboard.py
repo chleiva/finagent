@@ -178,9 +178,9 @@ def main():
         
         # Select and reorder columns for display
         display_columns = [
-            'Run_Number', 'Date', 'Model_Description', 'Training_File', 'Status',
-            'Best_Model', 'Test_AUC', 'Test_F1', 'Best_Precision', 'Best_Signals',
-            'Best_Expected_Value', 'Num_Features', 'Num_Samples', 'Duration'
+            'Date', 'Model_Description', 'Status',
+            'Best_Model', 'Test_AUC', 'Test_Recall', 'Test_F1', 'Best_Precision', 'Best_Signals',
+            'Best_Expected_Value', 'Num_Features', 'Num_Samples', 'Duration', 'Training_File'
         ]
         
         # Filter to only existing columns
@@ -292,10 +292,10 @@ def main():
             st.subheader("Detailed Performance Metrics")
             
             detailed_columns = [
-                'Run_Number', 'Date', 'Model_Description', 'Best_Model',
+                'Date', 'Model_Description', 'Best_Model',
                 'Test_AUC', 'Test_Accuracy', 'Test_Precision', 'Test_Recall', 'Test_F1',
                 'Best_Threshold', 'Best_Precision', 'Best_Signals', 'Best_Expected_Value',
-                'Top_Feature_1', 'Top_Feature_2', 'Top_Feature_3', 'Model_Performance_Notes'
+                'Top_Feature_1', 'Top_Feature_2', 'Top_Feature_3', 'Model_Performance_Notes', 'Training_File'
             ]
             
             detailed_columns = [col for col in detailed_columns if col in successful_df.columns]
@@ -364,7 +364,7 @@ def main():
             best_precision_run = successful_df.loc[successful_df['Best_Precision'].idxmax()]
             st.markdown(f"""
             <div class="metric-card success-card">
-                <h4>�� Best Precision</h4>
+                <h4>🎯 Best Precision</h4>
                 <p><strong>{best_precision_run['Best_Precision']:.1%}</strong></p>
                 <p>Run #{best_precision_run['Run_Number']}</p>
                 <p>{best_precision_run['Model_Description']}</p>
