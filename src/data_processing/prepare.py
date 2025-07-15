@@ -1,7 +1,7 @@
 import os
 import joblib
 import pandas as pd
-from utils import (
+from utils.utils import (
     load_data_optimized, treat_outliers, impute_missing, remove_low_variance_features,
     ensemble_feature_ranking, conservative_normalization, intelligent_sampling
 )
