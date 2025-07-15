@@ -51,7 +51,8 @@ show_menu() {
     echo "6. 🛠️  Setup/Install dependencies"
     echo "7. 📁 Browse available data files"
     echo "8. 🗂️  Model artifact management"
-    echo "9. ❌ Exit"
+    echo "9. 📖 Quick Reference (show commands & exit)"
+    echo "10. ❌ Exit"
     echo
 }
 
@@ -288,7 +289,7 @@ browse_data() {
 # Main loop
 while true; do
     show_menu
-    read -p "Enter your choice (1-9): " choice
+    read -p "Enter your choice (1-10): " choice
     
     case $choice in
         1)
@@ -321,6 +322,9 @@ while true; do
             model_management_menu
             ;;
         9)
+            show_quick_reference
+            ;;
+        10)
             print_color "👋 Goodbye!" $GREEN
             exit 0
             ;;
@@ -399,4 +403,97 @@ model_management_menu() {
         echo
         read -p "Press Enter to continue..."
     done
+}
+
+# Function to show quick reference
+show_quick_reference() {
+    clear
+    print_color "📖 QUICK REFERENCE - Available Commands" $PURPLE
+    print_color "=======================================" $PURPLE
+    echo
+    
+    print_color "🚀 MODEL TRAINING:" $BLUE
+    echo "  # Train with specific data file"
+    echo "  python src/model_training/model_training_15Jul_optimized1M.py data/raw/monthly_AAPL_2025-01.csv --description \"AAPL January 2025\" --fast"
+    echo
+    echo "  # Train with test data"
+    echo "  python src/model_training/model_training_15Jul_optimized1M.py data/raw/monthly_AAPL_2025-01.csv --test-csv data/raw/monthly_AAPL_2025-02.csv --description \"AAPL with test data\""
+    echo
+    
+    print_color "📊 DASHBOARD & MONITORING:" $BLUE
+    echo "  # Launch interactive dashboard"
+    echo "  streamlit run src/evaluation/streamlit_model_dashboard.py"
+    echo
+    echo "  # View training log"
+    echo "  python src/utils/view_model_log.py"
+    echo
+    echo "  # Interactive model comparison"
+    echo "  python src/evaluation/model_comparison_tool.py"
+    echo
+    
+    print_color "🗂️ MODEL MANAGEMENT:" $BLUE
+    echo "  # List all saved models"
+    echo "  python src/utils/model_manager.py list"
+    echo
+    echo "  # Find models by description"
+    echo "  python src/utils/model_manager.py find --keywords AAPL 2024"
+    echo
+    echo "  # Show model details"
+    echo "  python src/utils/model_manager.py show --model-id 20241215_143022_AAPL_January_2025"
+    echo
+    echo "  # Clean old models (older than 30 days)"
+    echo "  python src/utils/model_manager.py clean --days 30"
+    echo
+    
+    print_color "📈 DEVELOPMENT:" $BLUE
+    echo "  # Start Jupyter notebook"
+    echo "  jupyter notebook --notebook-dir=notebooks/"
+    echo
+    echo "  # Activate virtual environment"
+    echo "  source venv/bin/activate"
+    echo
+    echo "  # Install dependencies"
+    echo "  pip install -r config/requirements.txt"
+    echo
+    
+    print_color "🛠️ UTILITIES:" $BLUE
+    echo "  # Data processing"
+    echo "  python src/data_processing/concatenate_all.py --symbols AAPL,MSFT --output training_data.csv"
+    echo
+    echo "  # Model evaluation"
+    echo "  python src/evaluation/evaluate.py"
+    echo
+    echo "  # Makefile commands"
+    echo "  make train          # Train model"
+    echo "  make dashboard      # Launch dashboard"
+    echo "  make setup          # Setup environment"
+    echo
+    
+    print_color "📁 IMPORTANT FILES:" $BLUE
+    echo "  📊 model_training_log.csv          # Training history"
+    echo "  📋 model_artifacts/model_index.csv # Model index"
+    echo "  📁 model_artifacts/                # All saved models"
+    echo "  📁 data/raw/                       # Raw data files"
+    echo "  📁 evaluation_results/             # Evaluation outputs"
+    echo
+    
+    print_color "💡 TIPS:" $GREEN
+    echo "  • Always activate virtual environment: source venv/bin/activate"
+    echo "  • Use --fast flag for quick testing"
+    echo "  • Use descriptive model descriptions for easy finding"
+    echo "  • Check dashboard for real-time training monitoring"
+    echo "  • Use model manager to find and organize your models"
+    echo
+    
+    print_color "🎯 NEXT STEPS:" $YELLOW
+    echo "  1. Activate virtual environment: source venv/bin/activate"
+    echo "  2. Train a model: python src/model_training/model_training_15Jul_optimized1M.py data/raw/monthly_AAPL_2025-01.csv --description \"My first model\""
+    echo "  3. View results: streamlit run src/evaluation/streamlit_model_dashboard.py"
+    echo "  4. Find your model: python src/utils/model_manager.py list"
+    echo
+    
+    print_color "✅ Quick reference complete! You can now run commands manually." $GREEN
+    echo
+    print_color "👋 Exiting launcher..." $CYAN
+    exit 0
 }
