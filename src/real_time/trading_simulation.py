@@ -315,11 +315,8 @@ def get_model_scores(symbol_data):
             # Apply feature optimization to create missing features
             optimized_features = optimize_features(features, intra_day_df=intra_day_df)
 
-            print(f"🔍 OPTIMIZED DEBUG {row['symbol']}: Volume_Percentile_Intraday = {optimized_features.get('Volume_Percentile_Intraday', 'NOT_FOUND')}")
-            
             # Debug: Check what features were created
             impulse_features = {k: v for k, v in optimized_features.items() if 'Impulse' in k}
-            print(f"   Impulse features created: {len(impulse_features)} - {list(impulse_features.keys())}")
             
             # Get the model and run inference with optimized features
             model = model_adapter.get_model(symbol)
@@ -336,9 +333,10 @@ def get_model_scores(symbol_data):
                     missing_features.append(feat)
             
             X = pd.DataFrame([feature_vector], columns=model_features)
+
             
             # Run model prediction
-            threshold = 0.8
+            threshold = 0.5
             prediction, probability = model.predict(X, threshold=threshold)
             
             # Create result
@@ -361,7 +359,7 @@ def get_model_scores(symbol_data):
                 'prediction': 0,
                 'probability': 0.0,
                 'missing_features': [str(e)],
-                'threshold': 0.8,
+                'threshold': 0.5,
                 'error': str(e)
             })
     
@@ -606,18 +604,14 @@ def run_technical_assessment(symbol_data):
             
             # Calculate features and optimize
             features = model_adapter.compute_features(real_time_df, intra_day_df, daily_df)
-            print(f"🔍 FEATURES DEBUG {row['symbol']}: Volume_Percentile_Intraday = {features.get('Volume_Percentile_Intraday', 'NOT_FOUND')}")
-
-            #optimized_features = optimize_features(features, intra_day_df=intra_day_df)
-            #FEATURES MUST ONLY BE OPTIMIZED FOR TRAINING, NOT FOR VALIDATION
-            optimized_features = features
-            print(f"🔍 OPTIMIZED DEBUG {row['symbol']}: Volume_Percentile_Intraday = {optimized_features.get('Volume_Percentile_Intraday', 'NOT_FOUND')}")
-            
+        
+        
             # Use optimized features for technical assessment
             ts = pd.Timestamp(current_time)
             if bool(pd.isnull(ts)) or not isinstance(ts, pd.Timestamp):
                 ts = pd.Timestamp.now(tz=ny_tz)
             
+            #This must always be called with features without optimize!!!!
             assessment_passed, assessment_reason = meets_basic_buy_conditions(features, ts)
             results.append({
                 'symbol': symbol,
@@ -625,10 +619,8 @@ def run_technical_assessment(symbol_data):
                 'assessment_reason': assessment_reason
             })
             
-            # Save debug info for NVDA
-            if symbol == 'NVDA':
-                debug_features_nvda = optimized_features.copy()
-                debug_reason_nvda = assessment_reason
+
+
         except Exception as e:
             print(f"❌ Technical assessment failed for {symbol}: {e}")
             results.append({
@@ -704,9 +696,8 @@ def main():
                             print(f"   Sample data: high_1min={intra_day_df['high_1min'].iloc[-1]}, low_1min={intra_day_df['low_1min'].iloc[-1]}")
                         
                         # Apply feature optimization to create missing features
-                        #optimized_features = optimize_features(features, intra_day_df=intra_day_df)
+                        optimized_features = optimize_features(features, intra_day_df=intra_day_df)
                         #features must never be optimized for BUY signal
-                        optimized_features = features
                         
                         # Debug: Check what features were created
                         impulse_features = {k: v for k, v in optimized_features.items() if 'Impulse' in k}
@@ -729,7 +720,7 @@ def main():
                         X = pd.DataFrame([feature_vector], columns=model_features)
                         
                         # Run model prediction
-                        threshold = 0.8
+                        threshold = 0.5
                         prediction, probability = model.predict(X, threshold=threshold)
                         
                         # Create result
@@ -750,7 +741,7 @@ def main():
                             'prediction': 0,
                             'probability': 0.0,
                             'missing_features': [str(e)],
-                            'threshold': 0.8,
+                            'threshold': 0.5,
                             'error': str(e)
                         })
                 else:
@@ -760,7 +751,7 @@ def main():
                         'prediction': 0,
                         'probability': 0.0,
                         'missing_features': [],
-                        'threshold': 0.8
+                        'threshold': 0.5
                     })
             
             # Merge results for display
@@ -772,7 +763,8 @@ def main():
                 # Get volume percentile for display
                 volume_percentile = "N/A"
                 if tech_result['technical_assessment'] and 'features' in model_result:
-                    volume_percentile = f"{model_result['features'].get('Volume_Percentile_Intraday', 0):.3f}"
+                    #volume_percentile = f"{model_result['features'].get('Volume_Percentile_Intraday', 0):.3f}"
+                    volume_percentile = f"{features.get('Volume_Percentile_Intraday', 0):.3f}"
                 elif not tech_result['technical_assessment']:
                     # Try to get volume percentile even for failed assessments
                     try:
@@ -781,7 +773,7 @@ def main():
                         daily_df = fetch_daily_data(row['symbol'])
                         features = model_adapter.compute_features(real_time_df, intra_day_df, daily_df)
                         optimized_features = optimize_features(features, intra_day_df=intra_day_df)
-                        volume_percentile = f"{optimized_features.get('Volume_Percentile_Intraday', 0):.3f}"
+                        volume_percentile = f"{features.get('Volume_Percentile_Intraday', 0):.3f}"
                         
                         # DEBUG: Print volume information
                         current_volume = real_time_df['volume'].iloc[0] if 'volume' in real_time_df.columns else 0
