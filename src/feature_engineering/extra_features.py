@@ -69,7 +69,25 @@ def calculate_additional_features(real_time_df: pd.DataFrame, intra_day_df: pd.D
     current_rsi = None
     current_momentum = None
     current_imbalance = None
-    
+
+
+    # More comprehensive debug (add this right before current_volume calculation):
+    print("=" * 50)
+    print("🔍 REAL_TIME_DF FULL DEBUG:")
+    print(f"Shape: {real_time_df.shape}")
+    print(f"Columns: {list(real_time_df.columns)}")
+    print(f"Index: {real_time_df.index.tolist()}")
+    print("\nFull DataFrame:")
+    print(real_time_df.to_string())
+    print("\nColumn dtypes:")
+    print(real_time_df.dtypes)
+    if not real_time_df.empty:
+        print("\nFirst row as dict:")
+        print(real_time_df.iloc[0].to_dict())
+    print("=" * 50)
+
+
+
     # Try to get current technical indicators from the last calculation
     if not intra_day_df.empty:
         # Look for volume column
@@ -81,9 +99,18 @@ def calculate_additional_features(real_time_df: pd.DataFrame, intra_day_df: pd.D
             if len(day_volumes) > 0:
                 # Calculate percentile of current volume vs all volumes today
                 volumes_including_current = np.append(day_volumes.values, current_volume)
+
+               
+               
+                #Genius formula to calculate percentile
                 current_percentile = (volumes_including_current <= current_volume).mean()
                 features['Volume_Percentile_Intraday'] = current_percentile
-                
+
+                greater = sum(volumes_including_current > current_volume)
+                smaller = sum(volumes_including_current < current_volume)
+     
+                print(f"VOLUME PERCENTILE DEBUG > g:{greater} s:{smaller} cur_vol:{current_volume} calc_perc:{current_percentile}")
+
                 # Bonus: Volume Z-score (how many standard deviations from mean)
                 if len(day_volumes) > 2:
                     volume_mean = day_volumes.mean()

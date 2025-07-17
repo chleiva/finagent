@@ -275,7 +275,13 @@ def evaluate_model(model_package_path="trained_model/model_package.pkl", prepare
     if not strategy_df.empty:
         best_f1_idx = strategy_df['F1'].idxmax()
         best_ev_idx = strategy_df['Expected_Value'].idxmax()
-        best_precision_idx = strategy_df[strategy_df['Signals'] >= 20]['Precision'].idxmax() if (strategy_df['Signals'] >= 20).any() else None
+        # Find best precision with reasonable number of signals (>=50 and <=1000)
+        reasonable_signals = strategy_df[(strategy_df['Signals'] >= 50) & (strategy_df['Signals'] <= 1000)]
+        if not reasonable_signals.empty:
+            best_precision_idx = reasonable_signals['Precision'].idxmax()
+        else:
+            # Fallback to >20 signals if no reasonable range found
+            best_precision_idx = strategy_df[strategy_df['Signals'] >= 20]['Precision'].idxmax() if (strategy_df['Signals'] >= 20).any() else None
         print(f"   Best F1-Score (threshold {strategy_df.loc[best_f1_idx, 'Threshold']:.2f}):")
         print(f"      Signals: {strategy_df.loc[best_f1_idx, 'Signals']}")
         print(f"      Precision: {strategy_df.loc[best_f1_idx, 'Precision']:.1%}")

@@ -32,6 +32,7 @@ import subprocess
 import time
 import datetime
 import glob
+import uuid
 from pathlib import Path
 import pandas as pd
 
@@ -289,17 +290,19 @@ def validate_dataset_parameters(stocks, year, month):
         print("❌ No stocks selected.")
         return False
     
-    # Check if files exist for the given parameters
+    # Check if files exist for the given parameters in data/raw/
     files_found = []
+    data_dir = "data/raw"
+    
     for stock in stocks:
         if year and month:
-            pattern = f"monthly_{stock}_{year}-{month}.csv"
+            pattern = os.path.join(data_dir, f"monthly_{stock}_{year}-{month}.csv")
         elif year:
-            pattern = f"monthly_{stock}_{year}-*.csv"
+            pattern = os.path.join(data_dir, f"monthly_{stock}_{year}-*.csv")
         elif month:
-            pattern = f"monthly_{stock}_*-{month}.csv"
+            pattern = os.path.join(data_dir, f"monthly_{stock}_*-{month}.csv")
         else:
-            pattern = f"monthly_{stock}_*.csv"
+            pattern = os.path.join(data_dir, f"monthly_{stock}_*.csv")
         
         matching_files = glob.glob(pattern)
         files_found.extend(matching_files)
@@ -309,6 +312,7 @@ def validate_dataset_parameters(stocks, year, month):
         print(f"Stocks: {', '.join(stocks)}")
         print(f"Year: {year or 'all'}")
         print(f"Month: {month or 'all'}")
+        print(f"Directory: {data_dir}/")
         return False
     
     print(f"✅ Found {len(files_found)} files for the selected parameters")
@@ -320,7 +324,7 @@ def run_concatenation(stocks, year, month, output_file):
     print("=" * 40)
     
     # Build command
-    cmd = ["python", "concatenate_all.py", "--output", output_file]
+    cmd = ["python", "src/data_processing/concatenate_all.py", "--output", output_file]
     
     if stocks and len(stocks) == 1:
         # Single stock
@@ -337,12 +341,11 @@ def run_concatenation(stocks, year, month, output_file):
     print(f"Running: {' '.join(cmd)}")
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, check=True)
         print("✅ Dataset preparation completed successfully")
         return True
     except subprocess.CalledProcessError as e:
         print(f"❌ Dataset preparation failed: {e}")
-        print(f"Error output: {e.stderr}")
         return False
 
 def run_model_training(input_file, test_csv, description, fast_mode):
@@ -351,7 +354,7 @@ def run_model_training(input_file, test_csv, description, fast_mode):
     print("=" * 40)
     
     # Build command
-    cmd = ["python", "model_training_15Jul_optimized1M.py", input_file]
+    cmd = ["python", "src/model_training/model_training_15Jul_optimized1M.py", input_file]
     
     if fast_mode:
         cmd.append("--fast")
@@ -363,12 +366,11 @@ def run_model_training(input_file, test_csv, description, fast_mode):
     print(f"Running: {' '.join(cmd)}")
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, check=True)
         print("✅ Model training completed successfully")
         return True
     except subprocess.CalledProcessError as e:
         print(f"❌ Model training failed: {e}")
-        print(f"Error output: {e.stderr}")
         return False
 
 def interactive_mode():
@@ -419,7 +421,7 @@ def interactive_mode():
         return False
     
     # Step 7: Execute pipeline
-    return execute_pipeline(stocks, year, month, description, fast_mode, test_csv)
+    return execute_pipeline(stocks, year, month, description, fast_mode, test_csv, keep_temp=False)
 
 def command_line_mode(args):
     """Run in command-line mode"""
@@ -443,18 +445,45 @@ def command_line_mode(args):
     if not validate_dataset_parameters(stocks, args.year, args.month):
         return False
     
+    # Handle description
+    description = args.description
+    if not description:
+        # Generate a default description based on parameters
+        stocks_str = "_".join(stocks) if len(stocks) <= 3 else f"{len(stocks)}_stocks"
+        year_str = f"_{args.year}" if args.year else ""
+        month_str = f"_{args.month}" if args.month else ""
+        description = f"{stocks_str}{year_str}{month_str}_auto_generated"
+        print(f"📝 Using auto-generated description: {description}")
+        print("💡 Tip: Use --description 'Your custom description' for better identification")
+    
     # Execute pipeline
-    return execute_pipeline(stocks, args.year, args.month, args.description, args.fast, args.test_csv)
+    return execute_pipeline(stocks, args.year, args.month, description, args.fast, args.test_csv, args.keep_temp)
 
-def execute_pipeline(stocks, year, month, description, fast_mode, test_csv):
+def execute_pipeline(stocks, year, month, description, fast_mode, test_csv, keep_temp=False):
     """Execute the full pipeline"""
     print("\n🚀 EXECUTING PIPELINE")
     print("=" * 50)
     
     start_time = time.time()
     
-    # Step 1: Prepare dataset
-    output_file = f"training_dataset_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    # Step 1: Create temporary directory for this run
+    run_id = str(uuid.uuid4())[:8]  # First 8 characters of UUID
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    # Create descriptive filename with run ID for uniqueness
+    stocks_str = "_".join(stocks) if stocks else "all"
+    year_str = f"_{year}" if year else ""
+    month_str = f"_{month}" if month else ""
+    
+    # Create temporary directory
+    temp_dir = f"temp_runs/{timestamp}_{run_id}"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    output_file = os.path.join(temp_dir, f"training_dataset_{stocks_str}{year_str}{month_str}.csv")
+    
+    print(f"📁 Generated unique output file: {output_file}")
+    print(f"🆔 Run ID: {run_id}")
+    print(f"📂 Temporary directory: {temp_dir}")
     
     if not run_concatenation(stocks, year, month, output_file):
         print("❌ Pipeline failed at dataset preparation step.")
@@ -469,8 +498,55 @@ def execute_pipeline(stocks, year, month, description, fast_mode, test_csv):
     print(f"\n✅ PIPELINE COMPLETED SUCCESSFULLY!")
     print(f"⏱️ Total duration: {duration:.2f} seconds")
     print(f"📁 Output dataset: {output_file}")
+    print(f"🆔 Run ID: {run_id}")
+    
+    # Clean up temporary directory unless keep-temp is specified
+    if not keep_temp:
+        try:
+            import shutil
+            shutil.rmtree(temp_dir)
+            print(f"🗑️ Cleaned up temporary directory: {temp_dir}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not delete temporary directory {temp_dir}: {e}")
+    else:
+        print(f"💾 Kept temporary directory: {temp_dir}")
     
     return True
+
+def cleanup_old_temp_files():
+    """Clean up old temporary files and directories"""
+    print("\n🧹 CLEANING UP OLD TEMPORARY FILES")
+    print("=" * 40)
+    
+    # Clean up temp_runs directory
+    if os.path.exists("temp_runs"):
+        try:
+            import shutil
+            shutil.rmtree("temp_runs")
+            print("✅ Cleaned up temp_runs/ directory")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not clean up temp_runs/: {e}")
+    else:
+        print("✅ No temp_runs/ directory found")
+    
+    # Clean up old training dataset files in root
+    old_files = []
+    for file in os.listdir("."):
+        if file.startswith("training_dataset_") and file.endswith(".csv"):
+            old_files.append(file)
+    
+    if old_files:
+        print(f"🗑️ Found {len(old_files)} old training dataset files in root:")
+        for file in old_files:
+            try:
+                os.remove(file)
+                print(f"  ✅ Removed: {file}")
+            except Exception as e:
+                print(f"  ⚠️ Could not remove {file}: {e}")
+    else:
+        print("✅ No old training dataset files found in root")
+    
+    print("🧹 Cleanup completed!")
 
 def main():
     """Main function"""
@@ -507,6 +583,10 @@ Examples:
                        help='Test CSV file path for evaluation')
     parser.add_argument('--quick', action='store_true',
                        help='Quick mode: all stocks, all time, fast training')
+    parser.add_argument('--keep-temp', action='store_true',
+                       help='Keep temporary concatenated dataset file (default: delete after training)')
+    parser.add_argument('--cleanup-temp', action='store_true',
+                       help='Clean up old temporary files before starting')
     
     args = parser.parse_args()
     
@@ -519,13 +599,17 @@ Examples:
         if not args.description:
             args.description = "Quick training - all data"
     
+    # Clean up old temporary files if requested
+    if args.cleanup_temp:
+        cleanup_old_temp_files()
+    
     # Check if we have required files
-    if not os.path.exists("concatenate_all.py"):
-        print("❌ Error: concatenate_all.py not found in current directory")
+    if not os.path.exists("src/data_processing/concatenate_all.py"):
+        print("❌ Error: src/data_processing/concatenate_all.py not found")
         return 1
     
-    if not os.path.exists("model_training_15Jul_optimized1M.py"):
-        print("❌ Error: model_training_15Jul_optimized1M.py not found in current directory")
+    if not os.path.exists("src/model_training/model_training_15Jul_optimized1M.py"):
+        print("❌ Error: src/model_training/model_training_15Jul_optimized1M.py not found")
         return 1
     
     # Run appropriate mode

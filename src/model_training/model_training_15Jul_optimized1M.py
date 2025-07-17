@@ -273,12 +273,23 @@ def extract_evaluation_results(output_dir="evaluation_results"):
                 best_ev_row = strategy_df.loc[strategy_df['Expected_Value'].idxmax()]
                 results['best_expected_value'] = best_ev_row['Expected_Value']
                 
-                # Best precision with >20 signals
-                high_signal_df = strategy_df[strategy_df['Signals'] >= 20]
-                if not high_signal_df.empty:
-                    best_precision_row = high_signal_df.loc[high_signal_df['Precision'].idxmax()]
+                # Best precision with reasonable number of signals (>=50 and <=1000)
+                reasonable_signal_df = strategy_df[(strategy_df['Signals'] >= 50) & (strategy_df['Signals'] <= 1000)]
+                if not reasonable_signal_df.empty:
+                    best_precision_row = reasonable_signal_df.loc[reasonable_signal_df['Precision'].idxmax()]
                     results['best_precision'] = best_precision_row['Precision']
                     results['test_precision'] = best_precision_row['Precision']  # Extract precision
+                    results['best_precision_signals'] = best_precision_row['Signals']
+                    results['best_precision_threshold'] = best_precision_row['Threshold']
+                else:
+                    # Fallback to >20 signals if no reasonable range found
+                    high_signal_df = strategy_df[strategy_df['Signals'] >= 20]
+                    if not high_signal_df.empty:
+                        best_precision_row = high_signal_df.loc[high_signal_df['Precision'].idxmax()]
+                        results['best_precision'] = best_precision_row['Precision']
+                        results['test_precision'] = best_precision_row['Precision']
+                        results['best_precision_signals'] = best_precision_row['Signals']
+                        results['best_precision_threshold'] = best_precision_row['Threshold']
         
         # Load feature importance analysis
         feature_file = os.path.join(output_dir, 'feature_importance_analysis.csv')

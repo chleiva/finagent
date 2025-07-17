@@ -39,6 +39,20 @@ st.markdown("""
         padding: 1rem;
         border-radius: 0.5rem;
         border-left: 4px solid #1f77b4;
+        color: #333333 !important;
+    }
+    .metric-card h4 {
+        color: #1f77b4 !important;
+        margin-bottom: 0.5rem;
+        font-weight: bold;
+    }
+    .metric-card p {
+        color: #333333 !important;
+        margin: 0.25rem 0;
+    }
+    .metric-card strong {
+        color: #000000 !important;
+        font-size: 1.2em;
     }
     .success-card {
         border-left-color: #28a745;
@@ -58,6 +72,10 @@ st.markdown("""
         border-radius: 0.3rem;
         border-left: 3px solid #1f77b4;
         margin-bottom: 1rem;
+        color: #333333 !important;
+    }
+    .refresh-info small {
+        color: #666666 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -394,6 +412,17 @@ def main():
     # Best Performers
     if successful_count > 0:
         st.subheader("🏆 Best Performers")
+        st.markdown("""
+        <div style="background-color: #f0f8ff; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
+        <small>
+        <strong>📊 Metric Definitions:</strong><br>
+        • <strong>Best AUC:</strong> Highest Area Under ROC Curve (overall model performance)<br>
+        • <strong>Best F1:</strong> Highest F1-Score (balance of precision and recall)<br>
+        • <strong>Best Precision:</strong> Highest precision with 50-1000 signals (practical trading volume)<br>
+        • <strong>Best Expected Value:</strong> Highest expected return per trade (precision - false positive rate)
+        </small>
+        </div>
+        """, unsafe_allow_html=True)
         
         col1, col2, col3 = st.columns(3)
         
@@ -421,10 +450,11 @@ def main():
         
         with col3:
             best_precision_run = successful_df.loc[successful_df['Best_Precision'].idxmax()]
+            signals_info = f" ({best_precision_run.get('Best_Signals', 'N/A')} signals)" if 'Best_Signals' in best_precision_run else ""
             st.markdown(f"""
             <div class="metric-card success-card">
                 <h4>🎯 Best Precision</h4>
-                <p><strong>{best_precision_run['Best_Precision']:.1%}</strong></p>
+                <p><strong>{best_precision_run['Best_Precision']:.1%}</strong>{signals_info}</p>
                 <p>Run #{best_precision_run['Run_Number']}</p>
                 <p>{best_precision_run['Model_Description']}</p>
             </div>

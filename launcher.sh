@@ -367,14 +367,29 @@ show_quick_reference() {
     echo "  # Concatenate specific symbols"
     echo "  python src/data_processing/concatenate_all.py --symbols AAPL,MSFT,GOOGL"
     echo
+    echo "  # Single symbol"
+    echo "  python src/data_processing/concatenate_all.py --symbol AAPL"
+    echo
+    echo "  # Filter by year"
+    echo "  python src/data_processing/concatenate_all.py --symbols AAPL,MSFT --year 2025"
+    echo
+    echo "  # Filter by month"
+    echo "  python src/data_processing/concatenate_all.py --month 01"
+    echo
+    echo "  # Filter by year and month"
+    echo "  python src/data_processing/concatenate_all.py --symbol AAPL --year 2025 --month 01"
+    echo
     echo "  # Specify output file"
     echo "  python src/data_processing/concatenate_all.py --output my_training_data.csv"
     echo
     echo "  # Full example with all options"
-    echo "  python src/data_processing/concatenate_all.py --symbols AAPL,MSFT --output combined_data.csv --verbose"
+    echo "  python src/data_processing/concatenate_all.py --symbols AAPL,MSFT --year 2025 --month 01 --output combined_data.csv --verbose"
     echo
     echo "  ARGUMENTS:"
-    echo "    --symbols: Comma-separated list of stock symbols (default: all available)"
+    echo "    --symbol: Single stock symbol (e.g., AAPL)"
+    echo "    --symbols: Comma-separated list of stock symbols (e.g., AAPL,MSFT,GOOGL)"
+    echo "    --year: Year filter (e.g., 2025)"
+    echo "    --month: Month filter (e.g., 01, 02, 12)"
     echo "    --output: Output CSV filename (default: concatenated_data.csv)"
     echo "    --verbose: Show detailed progress information"
     echo "    --help: Show all available options"

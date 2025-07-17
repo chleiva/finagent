@@ -163,6 +163,8 @@ snapshot_*.csv
 *.temp
 temp/
 tmp/
+temp_runs/
+training_dataset_*.csv
 *.bak
 *.backup
 
