@@ -148,6 +148,12 @@ def fetch_real_time_data(symbol):
         
         (last_price, bid_price, ask_price, bid_size, ask_size, volume,
          high_price, low_price, close_price, server_epoch, received_epoch) = row
+
+
+        #print(f"se: {server_epoch}")
+        server_epoch_pandas = pd.to_datetime(server_epoch, unit='s', utc=True)
+        #print(f"se: {server_epoch_pandas}")
+        
         
         # Check if we have essential data
         if last_price is None or bid_price is None or ask_price is None:
@@ -164,7 +170,7 @@ def fetch_real_time_data(symbol):
             'askSize': [ask_size],
             'lastPrice': [last_price],
             'volume': [volume] if volume else [0],
-            'timestamp': [datetime.fromtimestamp(server_epoch) if server_epoch else datetime.now()]
+            'timestamp': server_epoch_pandas
         })
     
     conn.close()
@@ -177,6 +183,12 @@ def fetch_intraday_data(symbol, lookback_minutes=60):
     """Fetch intraday minute data for a symbol from the database"""
     simulated_now, actual_now = get_simulated_current_time()
     
+    print(f"\n🔄 DEBUG: Fetching intraday data for {symbol}")
+    print(f"  - Simulated time: {simulated_now}")
+    print(f"  - Actual time: {actual_now}")
+    print(f"  - Time offset: {TIME_OFFSET_MINUTES} minutes")
+    print(f"  - Lookback minutes: {lookback_minutes}")
+    
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
@@ -186,34 +198,42 @@ def fetch_intraday_data(symbol, lookback_minutes=60):
         
         # Get data from market open until simulated time minus 1 minute
         end_time = simulated_now - timedelta(minutes=1)
-
-        print(f"📈 {symbol} fetching intraday data from {market_open.strftime('%H:%M')} to {end_time.strftime('%H:%M')} (simulated time: {simulated_now.strftime('%H:%M')})")
-
-        # Use datetime() function in SQL for proper timestamp comparison
+        
+        print(f"  - Market open: {market_open}")
+        print(f"  - End time: {end_time}")
+        
         cursor.execute('''
             SELECT 
                 bar_time, open, high, low, close, volume
             FROM intraday_minute_data
-            WHERE symbol = ? 
-            AND datetime(bar_time) >= datetime(?) 
-            AND datetime(bar_time) <= datetime(?)
+            WHERE symbol = ? AND bar_time <= ?
             ORDER BY bar_time ASC
-        ''', (symbol, datetime_to_utc_string(market_open), datetime_to_utc_string(end_time)))
+        ''', (symbol, datetime_to_utc_string(end_time)))
         
+        rows = cursor.fetchall()
+        print(f"  - Found {len(rows)} rows")
+        if rows:
+            print(f"  - First row timestamp: {rows[0][0]}")
+            print(f"  - Last row timestamp: {rows[-1][0]}")
     else:
-        # Original intraday data fetching
-        cutoff_time = datetime.now() - pd.Timedelta(minutes=lookback_minutes)
-        
+        # In real-time mode, get last lookback_minutes of data
         cursor.execute('''
             SELECT 
                 bar_time, open, high, low, close, volume
             FROM intraday_minute_data
-            WHERE symbol = ? AND datetime(bar_time) >= datetime(?)
+            WHERE symbol = ?
             ORDER BY bar_time DESC
             LIMIT ?
-        ''', (symbol, cutoff_time.strftime('%Y-%m-%d %H:%M:%S'), lookback_minutes))
+        ''', (symbol, lookback_minutes))
+        
+        rows = cursor.fetchall()
+        print(f"  - Found {len(rows)} rows")
     
-    rows = cursor.fetchall()
+        if rows:
+            print(f"  - First row timestamp: {rows[0][0]}")
+            print(f"  - Last row timestamp: {rows[-1][0]}")
+    
+
     conn.close()
     
     if not rows:
@@ -587,35 +607,52 @@ def check_data_freshness():
 def run_technical_assessment(symbol_data):
     """Run technical assessment for each symbol using real calculated features"""
     results = []
-    debug_features_nvda = None
-    debug_reason_nvda = None
     
     # Get current time (simulated or actual)
     simulated_now, actual_now = get_simulated_current_time()
     current_time = simulated_now
     
+    print(f"\n🔍 DEBUG: Running technical assessment")
+    print(f"  - Simulated time: {current_time}")
+    print(f"  - Actual time: {actual_now}")
+    print(f"  - Time offset: {TIME_OFFSET_MINUTES} minutes")
+    
     for row in symbol_data:
         symbol = row['symbol']
         try:
+            print(f"\n📊 Processing {symbol}...")
+            
             # Fetch real data for feature calculation
             real_time_df = fetch_real_time_data(symbol)
-            intra_day_df = fetch_intraday_data(symbol)
-            daily_df = fetch_daily_data(symbol)
+            print(f"  - Real-time data shape: {real_time_df.shape}")
             
-            # Calculate features and optimize
+            # Fetch intraday data
+            intra_day_df = fetch_intraday_data(symbol)
+            print(f"  - Intraday data shape: {intra_day_df.shape}")
+            
+            # Fetch daily data
+            daily_df = fetch_daily_data(symbol)
+            print(f"  - Daily data shape: {daily_df.shape}")
+            
+            # Calculate features
+            model_adapter = ModelInferenceAdapter()
             features = model_adapter.compute_features(real_time_df, intra_day_df, daily_df)
-        
-        
+            print(f"  - Calculated features: {list(features.keys())}")
+            
+            # Run technical assessment
+            assessment_result, assessment_reason = meets_basic_buy_conditions(features, current_time)
+            print(f"  - Technical assessment result: {assessment_result}")
+            
             # Use optimized features for technical assessment
             ts = pd.Timestamp(current_time)
             if bool(pd.isnull(ts)) or not isinstance(ts, pd.Timestamp):
                 ts = pd.Timestamp.now(tz=ny_tz)
             
             #This must always be called with features without optimize!!!!
-            assessment_passed, assessment_reason = meets_basic_buy_conditions(features, ts)
+            #assessment_passed, assessment_reason = meets_basic_buy_conditions(features, ts)
             results.append({
                 'symbol': symbol,
-                'technical_assessment': assessment_passed,
+                'technical_assessment': assessment_result,
                 'assessment_reason': assessment_reason
             })
             
@@ -629,8 +666,7 @@ def run_technical_assessment(symbol_data):
                 'assessment_reason': f'error: {str(e)}'
             })
     
-    # Attach debug info for NVDA to the results for printing after the table
-    results.append({'_debug_nvda_features': debug_features_nvda, '_debug_nvda_reason': debug_reason_nvda})
+
     return results
 
 def main():
@@ -790,8 +826,10 @@ def main():
                         return 'N/A'
                     if last_update.tzinfo:
                         # Convert UTC to NY time for display
-                        ny_time = last_update.tz_convert('America/New_York')
-                        return ny_time.strftime('%H:%M:%S')
+                        print(f"{last_update}")
+                        #exit()
+                        #ny_time = last_update.tz_convert('America/New_York')
+                        return last_update.strftime('%H:%M:%S')
                     else:
                         return last_update.strftime('%H:%M:%S')
                 

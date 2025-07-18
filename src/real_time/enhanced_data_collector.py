@@ -1637,6 +1637,80 @@ class EnhancedIBWebSocketCollector:
                 self.fetch_and_store_daily_bars(symbol, days=60)
             time.sleep(300)  # Run every 5 minutes
 
+    def detect_and_fill_intraday_gaps(self):
+        """Detect gaps in minute-by-minute data and backfill missing periods"""
+        try:
+            current_time = datetime.now(self.market_timezone)
+            
+            # Only check during market hours
+            if not self.is_market_open(current_time):
+                return
+            
+            # Calculate expected market open time for today
+            market_open = current_time.replace(hour=9, minute=30, second=0, microsecond=0)
+            if current_time < market_open:
+                market_open = market_open - timedelta(days=1)
+            
+            # Calculate expected number of minutes from market open to now
+            time_diff = current_time - market_open
+            expected_minutes = int(time_diff.total_seconds() / 60)
+            
+            print(f"🔍 Gap detection: Expected {expected_minutes} minutes from {market_open.strftime('%H:%M')} to {current_time.strftime('%H:%M')}")
+            
+            conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+            cursor = conn.cursor()
+            
+            gaps_found = False
+            
+            for symbol in self.symbols:
+                # Get all minute timestamps for this symbol from today's market open
+                cursor.execute('''
+                    SELECT COUNT(DISTINCT strftime('%Y-%m-%d %H:%M', bar_time)) as minute_count
+                    FROM intraday_minute_data 
+                    WHERE symbol = ? 
+                    AND datetime(bar_time) >= datetime(?)
+                    AND datetime(bar_time) <= datetime(?)
+                ''', (symbol, 
+                      market_open.astimezone(timezone.utc).isoformat(),
+                      current_time.astimezone(timezone.utc).isoformat()))
+                
+                actual_minutes = cursor.fetchone()[0]
+                missing_minutes = expected_minutes - actual_minutes
+                
+                if missing_minutes > 0:
+                    print(f"⚠️ {symbol}: Missing {missing_minutes} minutes of data (have {actual_minutes}/{expected_minutes})")
+                    gaps_found = True
+                else:
+                    print(f"✅ {symbol}: Complete data ({actual_minutes} minutes)")
+            
+            conn.close()
+            
+            # If gaps found, do a complete backfill from market open
+            if gaps_found:
+                print("🔄 Gaps detected, performing complete backfill from market open...")
+                self.backfill_intraday_minute_data(from_market_open=True)
+            else:
+                print("✅ No gaps detected, all symbols have complete minute data")
+                
+        except Exception as e:
+            print(f"❌ Error in gap detection: {e}")
+
+    def periodic_gap_detection_and_backfill(self):
+        """Periodically check for gaps and backfill missing data"""
+        while self.running:
+            try:
+                time.sleep(300)  # Check every 5 minutes
+                
+                if not self.running:
+                    break
+                    
+                self.detect_and_fill_intraday_gaps()
+                
+            except Exception as e:
+                print(f"⚠️ Error in periodic gap detection: {e}")
+                time.sleep(60)  # Wait before retrying
+
+
     def start_realtime_collection(self, clear_existing_data=False):
         """Start real-time data collection via WebSocket with enhanced reliability"""
         print("🚀 Enhanced IBKR WebSocket Real-time Data Collector")
@@ -1734,6 +1808,10 @@ class EnhancedIBWebSocketCollector:
         # Start task for migrating data to new structured tables
         migration_thread = threading.Thread(target=self.periodic_migration_tasks, daemon=True)
         migration_thread.start()
+        
+        # Start gap detection and backfill thread
+        gap_detection_thread = threading.Thread(target=self.periodic_gap_detection_and_backfill, daemon=True)
+        gap_detection_thread.start()
         
         print("\n🔄 Data collection threads started. Press Ctrl+C to stop.")
         
