@@ -40,6 +40,14 @@ from data_processing.prepare import prepare_data
 prepare_data("input_data.csv", output_dir="prepared_data")
 ```
 
+**Arguments**:
+- `df_path`: Path to input CSV file
+- `output_dir`: Output directory for prepared data (default: "prepared_data")
+- `top_n_features`: Number of top features to select (default: 20)
+- `sample_size`: Number of samples to use (default: 200000)
+- `sampling_strategy`: Sampling strategy ('balanced', 'stratified', etc.)
+- `fast`: Fast mode for debugging (reduces sample size and features)
+
 #### `concatenate_all.py` - Data Concatenation Utility
 **Purpose**: Combines multiple data files into a single dataset for training.
 
@@ -102,6 +110,46 @@ assessment, reason = meets_basic_buy_conditions(features, current_time)
 - Market microstructure enhancements
 - Advanced statistical features
 - Custom trading signals
+
+#### `stock_minute_processor_parallel.py` - Parallel Data Processing
+**Purpose**: Processes large datasets in parallel for feature engineering.
+
+**Key Features**:
+- **Parallel Processing**: Multi-core processing for large datasets
+- **Memory Optimization**: Efficient memory management for large files
+- **Progress Tracking**: Real-time progress monitoring with tqdm
+- **Performance Monitoring**: CPU and memory usage tracking
+- **Batch Processing**: Processes multiple symbols and dates efficiently
+- **Data Validation**: Comprehensive data quality checks
+
+**Usage**:
+```bash
+# Process single symbol and date
+python src/feature_engineering/stock_minute_processor_parallel.py --symbol AAPL --date 2025-01-15
+
+# Process all symbols for a date range
+python src/feature_engineering/stock_minute_processor_parallel.py --start-date 2025-01-01 --end-date 2025-01-31
+
+# Merge monthly files
+python src/feature_engineering/stock_minute_processor_parallel.py --merge
+```
+
+**Arguments**:
+- `--symbol`: Stock symbol to process
+- `--date`: Specific date to process (YYYY-MM-DD)
+- `--start-date`: Start date for range processing
+- `--end-date`: End date for range processing
+- `--merge`: Merge monthly files into single dataset
+- `--workers`: Number of parallel workers (default: auto-detect)
+
+#### `features_cleaner.py` - Feature Cleaning and Validation
+**Purpose**: Cleans and validates features for model training.
+
+**Key Features**:
+- **Data Cleaning**: Removes outliers and invalid values
+- **Feature Validation**: Ensures feature consistency
+- **Missing Value Handling**: Imputes missing values appropriately
+- **Data Quality Checks**: Comprehensive validation pipeline
 
 ### 3. Inference (`inference/`)
 
@@ -179,6 +227,13 @@ from model_training.model_training_15Jul_optimized1M import train_model
 train_model("prepared_data/data_splits.pkl", "trained_model")
 ```
 
+**Arguments**:
+- `prepared_data_path`: Path to prepared data splits (default: "prepared_data/data_splits.pkl")
+- `output_dir`: Output directory for trained models (default: "trained_model")
+- `n_trials`: Number of Optuna optimization trials (default: 50)
+- `cv_folds`: Number of cross-validation folds (default: 5)
+- `fast`: Fast mode for debugging (reduces trials and folds)
+
 ### 6. Evaluation (`evaluation/`)
 
 #### `evaluate.py` - Model Evaluation
@@ -248,33 +303,145 @@ python src/launchers/trading_model_launcher.py --stocks AAPL,MSFT --year 2025 --
 
 ### 8. Real-Time Trading (`real_time/`)
 
+#### `enhanced_data_collector.py` - IBKR Data Collector
+**Purpose**: Collects real-time market data from Interactive Brokers (IBKR) API.
+
+**Key Features**:
+- **IBKR Integration**: Connects to IBKR WebSocket and REST APIs
+- **Real-Time Data**: Fetches live bid/ask, volume, and price data every 10 seconds
+- **Intraday Data**: Collects 1-minute bars every 30 seconds
+- **Historical Data**: Fetches 30-day historical data from Yahoo Finance
+- **Database Storage**: Stores data in SQLite database
+- **Authentication**: Handles IBKR session management
+- **Multi-threading**: Parallel data collection for multiple symbols
+
+**Prerequisites**:
+- IBKR TWS or IB Gateway running on localhost:15000
+- IBKR account with market data subscriptions
+- Python packages: `websocket-client`, `requests`, `yfinance`
+
+**Usage**:
+```bash
+# Start the data collector (must run before real-time trading)
+python src/real_time/enhanced_data_collector.py
+```
+
+**Configuration**:
+- **Symbols**: Top 10 NASDAQ stocks (configurable in SYMBOLS list)
+- **Database**: `database/realtime_market_data.db`
+- **IBKR URL**: `https://localhost:15000/v1/api`
+- **WebSocket URL**: `wss://localhost:15000/v1/api/ws`
+
 #### `real_time_trading.py` - Live Trading System
-**Purpose**: Implements real-time trading with live market data.
+**Purpose**: Implements real-time trading with live market data and ML predictions.
 
 **Key Features**:
 - **Real-Time Data**: Fetches live market data from database
-- **Technical Assessment**: Real-time buy condition evaluation
-- **Model Inference**: Live prediction generation
-- **Position Management**: Real-time position tracking
-- **Risk Management**: Live risk monitoring
+- **Technical Assessment**: Real-time buy condition evaluation using `buy_label.py`
+- **Model Inference**: Live prediction generation using trained models
+- **Feature Engineering**: Real-time feature calculation and optimization
+- **Risk Management**: Live risk monitoring and position sizing
+- **Data Freshness**: Monitors data latency and quality
+- **Comprehensive Display**: Real-time table with predictions and metrics
+
+**Prerequisites**:
+- Enhanced data collector must be running
+- Trained models available in `model_artifacts/`
+- Database populated with real-time data
 
 **Usage**:
-```python
-from real_time.real_time_trading import main
-main()  # Starts real-time trading loop
+```bash
+# Start real-time trading (after data collector is running)
+python src/real_time/real_time_trading.py
 ```
 
-#### `enhanced_data_collector.py` - Data Collection
-**Purpose**: Collects and processes real-time market data.
+**Arguments**: None (configured via constants in the file)
 
-**Key Features**:
-- Real-time data fetching
-- Data validation and cleaning
-- Database storage
-- Data quality monitoring
+**Configuration**:
+- **Symbols**: Top 10 NASDAQ stocks
+- **Fetch Interval**: 30 seconds
+- **Database**: `database/realtime_market_data.db`
+- **Model Path**: `model_artifacts/model_index.csv`
 
 #### `data_collector_open_ai.py` - Alternative Data Source
 **Purpose**: Collects data from alternative sources (OpenAI integration).
+
+**Key Features**:
+- Alternative data collection methods
+- OpenAI API integration
+- Backup data sources
+
+### Real-Time Trading Setup Guide
+
+#### Step 1: Start IBKR Data Collection
+```bash
+# 1. Ensure IBKR TWS or IB Gateway is running on localhost:15000
+# 2. Login to IBKR and authenticate
+# 3. Start the data collector
+python src/real_time/enhanced_data_collector.py
+```
+
+**Expected Output**:
+```
+🚀 Starting IBKR Data Collector
+📊 Symbols: NVDA, MSFT, AAPL, AMZN, GOOGL, META, AVGO, TSLA, NFLX, COST
+🗄️ Database: database/realtime_market_data.db
+✅ Authenticated with session: abc123def456...
+✅ NVDA: Contract ID 76792991
+✅ MSFT: Contract ID 272093
+...
+📈 NVDA: Stored 390 minute bars
+📈 MSFT: Stored 390 minute bars
+...
+✅ Data collection started. Press Ctrl+C to stop.
+```
+
+#### Step 2: Start Real-Time Trading
+```bash
+# In a new terminal, start the trading system
+python src/real_time/real_time_trading.py
+```
+
+**Expected Output**:
+```
+🚦 Trading System (REAL DATA MODE ONLY)
+============================================================
+Symbols: NVDA, MSFT, AAPL, AMZN, GOOGL, META, AVGO, TSLA, NFLX, COST
+Fetching REAL data every 30 seconds. Press Ctrl+C to stop.
+
+✅ Technical assessment passed for: NVDA, MSFT, AAPL
+
+┌────────┬────────────┬────────────┬────────────────┬──────────┬────────────┬────────┬──────────────────┬───────────┐
+│ Symbol │ Last Price │ Last Update│ Tech Assessment │ Prediction│ Probability│ Vol %  │ Missing Features │ Threshold │
+├────────┼────────────┼────────────┼────────────────┼──────────┼────────────┼────────┼──────────────────┼───────────┤
+│ NVDA   │ $485.09    │ 14:30:15   │ ✅ PASS        │ BUY      │ 0.8234     │ 0.756  │ 0                │ 0.500     │
+│ MSFT   │ $378.85    │ 14:30:12   │ ✅ PASS        │ NO BUY   │ 0.2341     │ 0.623  │ 0                │ 0.500     │
+...
+```
+
+#### Step 3: Monitor and Manage
+- **Data Freshness**: Monitor latency and data quality
+- **Buy Signals**: Watch for BUY predictions with high probability
+- **Technical Assessment**: Ensure symbols pass basic conditions
+- **Missing Features**: Address any feature calculation issues
+
+#### Troubleshooting Real-Time Trading
+
+**Common Issues**:
+1. **"Not authenticated"**: Ensure IBKR TWS is running and logged in
+2. **"No real-time data found"**: Check data collector is running
+3. **"Model not found"**: Train models before running real-time trading
+4. **"Missing features"**: Check feature engineering pipeline
+5. **"Database connection error"**: Verify database path and permissions
+
+**Debug Mode**:
+```bash
+# Check data freshness
+python -c "from src.real_time.real_time_trading import check_data_freshness; print(check_data_freshness())"
+
+# Test single symbol
+python -c "from src.real_time.real_time_trading import fetch_real_time_data; print(fetch_real_time_data('AAPL'))"
+```
 
 ### 9. Trading Simulation (`trading_simulation/`)
 
@@ -379,6 +546,10 @@ python src/launchers/trading_model_launcher.py --stocks AAPL,MSFT --year 2025 --
 
 ### 2. Run Real-Time Trading
 ```bash
+# Step 1: Start IBKR data collection (requires IBKR TWS running)
+python src/real_time/enhanced_data_collector.py
+
+# Step 2: In a new terminal, start real-time trading
 python src/real_time/real_time_trading.py
 ```
 
@@ -390,6 +561,60 @@ python src/trading_simulation/trading_simulation.py --simulation_date 2025011610
 ### 4. Evaluate Models
 ```bash
 python src/evaluation/evaluate.py
+```
+
+## 🔄 Complete Workflow Guide
+
+### Phase 1: Data Preparation
+```bash
+# 1. Concatenate monthly data files
+python src/data_processing/concatenate_all.py --stocks AAPL,MSFT,GOOGL --year 2025 --month 01
+
+# 2. Process features in parallel (for large datasets)
+python src/feature_engineering/stock_minute_processor_parallel.py --start-date 2025-01-01 --end-date 2025-01-31
+
+# 3. Prepare data for training
+python -c "from src.data_processing.prepare import prepare_data; prepare_data('merged_features.csv', fast=True)"
+```
+
+### Phase 2: Model Training
+```bash
+# 1. Train individual models
+python src/model_training/model_training_15Jul_optimized1M.py merged_features.csv --fast
+
+# 2. Or use the launcher for multiple stocks
+python src/launchers/trading_model_launcher.py --stocks AAPL,MSFT,GOOGL --year 2025 --month 01 --description "Tech stocks Q1 2025"
+
+# 3. Batch train top 10 NASDAQ stocks
+python src/scripts/batch_train_top10.py
+```
+
+### Phase 3: Model Evaluation
+```bash
+# 1. Evaluate trained models
+python src/evaluation/evaluate.py
+
+# 2. Compare multiple models
+python src/evaluation/model_comparison_tool.py
+
+# 3. Launch interactive dashboard
+streamlit run src/evaluation/streamlit_model_dashboard.py
+```
+
+### Phase 4: Real-Time Trading Setup
+```bash
+# 1. Ensure IBKR TWS is running on localhost:15000
+# 2. Start data collection
+python src/real_time/enhanced_data_collector.py
+
+# 3. In new terminal, start trading
+python src/real_time/real_time_trading.py
+```
+
+### Phase 5: Historical Simulation
+```bash
+# Run simulation for specific date/time
+python src/trading_simulation/trading_simulation.py --simulation_date 202501161030
 ```
 
 ## 📊 Key Features
