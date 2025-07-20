@@ -125,9 +125,6 @@ def fetch_intraday_data(symbol, simulated_now_utc):
     """Fetch intraday minute data for a symbol from the database using historical simulation"""
     simulation_date = simulated_now_utc.date()
     
-    print(f"\n🔄 DEBUG: Fetching intraday data for {symbol}")
-    print(f"  - Simulated time UTC: {simulated_now_utc}")
-    print(f"  - Simulation date: {simulation_date}")
     
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -279,7 +276,6 @@ def run_technical_assessment(symbol_data, simulated_now_utc):
     
 
     for row in symbol_data:
-        print(f"DEBUG LINE 464: {row}")
         symbol = row['symbol']
         try:
             print(f"\n📊 Processing {symbol}...")
@@ -303,22 +299,19 @@ def run_technical_assessment(symbol_data, simulated_now_utc):
             # Fetch real data for feature calculation
             real_time_df = intra_day_df.iloc[[-1]] if not intra_day_df.empty else pd.DataFrame()
 
-            print(f"DEBUG line 395: {real_time_df}")
-
             # Fetch daily data
             daily_df = fetch_daily_data(symbol)
-            print(f"  - Daily data shape: {daily_df.shape}")
             
             # Calculate features
             features = model_adapter.compute_features(real_time_df, intra_day_df, daily_df)
-            print(f"  - Calculated features: {list(features.keys())}")
+            #print(f"  - Calculated features: {list(features.keys())}")
             
             # Convert UTC timestamp to NY timestamp for technical assessment
             ts_ny = pd.Timestamp(current_time_ny)
             
             # Run technical assessment
             assessment_result, assessment_reason = meets_basic_buy_conditions(features, ts_ny)
-            print(f"  - Technical assessment result: {assessment_result}")
+            #print(f"  - Technical assessment result: {assessment_result}")
             
             results.append({
                 'symbol': symbol,
