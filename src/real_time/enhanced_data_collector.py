@@ -1695,6 +1695,213 @@ class EnhancedIBWebSocketCollector:
         except Exception as e:
             print(f"❌ Error in gap detection: {e}")
 
+    def validate_intraday_data_completeness(self, symbol):
+        """
+        Validate that we have complete 1-minute data for a symbol from market open 
+        until min(now-1, market_close)
+        
+        Returns:
+            (is_complete: bool, missing_minutes: int, expected_range: tuple)
+        """
+        try:
+            current_time = datetime.now(self.market_timezone)
+            
+            # Only validate during market hours
+            if not self.is_market_open(current_time):
+                return True, 0, None  # No validation needed outside market hours
+            
+            # Calculate market open time for today (9:30 AM ET)
+            market_open = current_time.replace(hour=9, minute=30, second=0, microsecond=0)
+            if current_time < market_open:
+                market_open = market_open - timedelta(days=1)
+            
+            # Calculate validation end time: min(now-1, market_close)
+            market_close = current_time.replace(hour=16, minute=0, second=0, microsecond=0)
+            validation_end = min(current_time - timedelta(minutes=1), market_close)
+            
+            # If validation end is before market open, nothing to validate
+            if validation_end <= market_open:
+                return True, 0, None
+            
+            # Calculate expected number of minutes from market open to validation end
+            time_diff = validation_end - market_open
+            expected_minutes = int(time_diff.total_seconds() / 60)
+            
+            # Convert to UTC for database query
+            market_open_utc = market_open.astimezone(timezone.utc)
+            validation_end_utc = validation_end.astimezone(timezone.utc)
+            
+            # Query database for actual minute records
+            conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT COUNT(DISTINCT strftime('%Y-%m-%d %H:%M', bar_time)) as minute_count
+                FROM intraday_minute_data 
+                WHERE symbol = ? 
+                AND bar_time >= ?
+                AND bar_time <= ?
+            ''', (symbol, market_open_utc, validation_end_utc))
+            
+            actual_minutes = cursor.fetchone()[0]
+            conn.close()
+            
+            missing_minutes = expected_minutes - actual_minutes
+            is_complete = missing_minutes <= 0
+            
+            return is_complete, missing_minutes, (market_open, validation_end)
+            
+        except Exception as e:
+            print(f"❌ Error validating {symbol}: {e}")
+            return False, -1, None
+
+    def backfill_specific_symbols(self, symbols_with_gaps):
+        """Backfill intraday data for specific symbols that have gaps"""
+        if not symbols_with_gaps:
+            return True
+        
+        try:
+            current_time = datetime.now(self.market_timezone)
+            
+            # Calculate market open time for today
+            market_open = current_time.replace(hour=9, minute=30, second=0, microsecond=0)
+            if current_time < market_open:
+                market_open = market_open - timedelta(days=1)
+                
+            # Calculate minutes from market open to now
+            time_diff = current_time - market_open
+            lookback_minutes = int(time_diff.total_seconds() / 60)
+            lookback_minutes = min(lookback_minutes, 390)  # Cap at full trading day
+            
+            print(f"🔄 Backfilling {len(symbols_with_gaps)} symbols with gaps: {', '.join(symbols_with_gaps)}")
+            
+            success_count = 0
+            total_bars = 0
+            
+            for symbol in symbols_with_gaps:
+                if symbol not in self.contract_ids:
+                    print(f"⚠️ No contract ID for {symbol}, skipping backfill")
+                    continue
+                    
+                contract_id = self.contract_ids[symbol]
+                
+                # Fetch 1-min bars from market open
+                params = {
+                    'conid': contract_id,
+                    'period': f'{lookback_minutes}min',
+                    'bar': '1min',
+                    'outsideRth': False  # Only regular trading hours
+                }
+                
+                response = self.session.get(f"{self.base_url}/iserver/marketdata/history", params=params)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    bars = data.get('data', [])
+                    symbol_bars = 0
+                    
+                    for bar in bars:
+                        try:
+                            bar_time = datetime.fromtimestamp(bar['t'] / 1000, tz=timezone.utc)
+                            open_price = bar.get('o')
+                            high_price = bar.get('h')
+                            low_price = bar.get('l')
+                            close_price = bar.get('c')
+                            volume = bar.get('v', 0)
+                            
+                            conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+                            cursor = conn.cursor()
+                            cursor.execute('''
+                                INSERT OR IGNORE INTO intraday_minute_data 
+                                (symbol, contract_id, bar_time, open, high, low, close, volume)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (symbol, contract_id, bar_time, open_price, high_price, low_price, close_price, volume))
+                            conn.commit()
+                            conn.close()
+                            symbol_bars += 1
+                        except Exception as e:
+                            print(f"⚠️ Error storing bar for {symbol}: {e}")
+                    
+                    if symbol_bars > 0:
+                        success_count += 1
+                        total_bars += symbol_bars
+                else:
+                    print(f"❌ Failed to backfill {symbol}: {response.status_code}")
+                    return False  # Return error if unable to fill gaps
+                
+                time.sleep(0.5)  # Rate limiting
+            
+            print(f"✅ Backfill complete: {success_count}/{len(symbols_with_gaps)} symbols, {total_bars} bars")
+            return success_count == len(symbols_with_gaps)
+            
+        except Exception as e:
+            print(f"❌ Error during selective backfill: {e}")
+            return False
+
+    def validate_all_symbols_and_backfill(self):
+        """Validate data completeness for all symbols and backfill only those with gaps"""
+        try:
+            current_time = datetime.now(self.market_timezone)
+            
+            # Only validate during market hours
+            if not self.is_market_open(current_time):
+                return True  # No validation needed outside market hours
+            
+            symbols_with_gaps = []
+            total_missing = 0
+            
+            # Validate each symbol
+            for symbol in self.symbols:
+                is_complete, missing_minutes, time_range = self.validate_intraday_data_completeness(symbol)
+                
+                if not is_complete and missing_minutes > 0:
+                    symbols_with_gaps.append(symbol)
+                    total_missing += missing_minutes
+            
+            # If any gaps found, backfill only those symbols
+            if symbols_with_gaps:
+                print(f"⚠️ Data gaps detected in {len(symbols_with_gaps)} symbols (total missing: {total_missing} minutes)")
+                
+                # Attempt to backfill the symbols with gaps
+                if not self.backfill_specific_symbols(symbols_with_gaps):
+                    print(f"❌ ERROR: Unable to fill gaps for symbols: {', '.join(symbols_with_gaps)}")
+                    return False
+                
+                # Re-validate after backfill
+                remaining_gaps = []
+                for symbol in symbols_with_gaps:
+                    is_complete, missing_minutes, _ = self.validate_intraday_data_completeness(symbol)
+                    if not is_complete and missing_minutes > 0:
+                        remaining_gaps.append(symbol)
+                
+                if remaining_gaps:
+                    print(f"❌ ERROR: Still missing data after backfill for: {', '.join(remaining_gaps)}")
+                    return False
+            
+            return True  # All validation passed
+            
+        except Exception as e:
+            print(f"❌ Error in validation and backfill: {e}")
+            return False
+
+    def periodic_validation_and_backfill(self):
+        """Periodically validate data completeness and backfill gaps (every 30 seconds)"""
+        while self.running:
+            try:
+                time.sleep(30)  # Check every 30 seconds as requested
+                
+                if not self.running:
+                    break
+                    
+                # Validate all symbols and backfill only those with gaps
+                if not self.validate_all_symbols_and_backfill():
+                    print("❌ CRITICAL: Data validation/backfill failed!")
+                    # Continue running but log the error
+                    
+            except Exception as e:
+                print(f"⚠️ Error in periodic validation: {e}")
+                time.sleep(60)  # Wait before retrying
+
     def periodic_gap_detection_and_backfill(self):
         """Periodically check for gaps and backfill missing data"""
         while self.running:
@@ -1809,9 +2016,9 @@ class EnhancedIBWebSocketCollector:
         migration_thread = threading.Thread(target=self.periodic_migration_tasks, daemon=True)
         migration_thread.start()
         
-        # Start gap detection and backfill thread
-        gap_detection_thread = threading.Thread(target=self.periodic_gap_detection_and_backfill, daemon=True)
-        gap_detection_thread.start()
+        # Start enhanced validation and backfill thread (every 30 seconds)
+        validation_thread = threading.Thread(target=self.periodic_validation_and_backfill, daemon=True)
+        validation_thread.start()
         
         print("\n🔄 Data collection threads started. Press Ctrl+C to stop.")
         

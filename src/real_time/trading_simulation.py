@@ -21,255 +21,188 @@ from inference.model_inference_adapter import ModelInferenceAdapter
 # Import feature optimization
 from feature_engineering.feature_optimizer import optimize_features
 
+# Import historical simulation fetcher
+from real_time.historical_simulation_fetcher import LocalHistoricalSimulationFetcher
+
 DB_PATH = 'database/realtime_market_data.db'
 SYMBOLS = [
     "NVDA", "MSFT", "AAPL", "AMZN", "GOOGL", "META", "AVGO", "TSLA", "NFLX", "COST"
 ]
 
-FETCH_INTERVAL = 30  # seconds
+FETCH_INTERVAL = 5  # seconds
 
-# Global variable to store time offset in minutes
-TIME_OFFSET_MINUTES = 0
+# Global variables for simulation mode
+SIMULATION_DATE_NY = None
 
-def get_simulated_current_time():
-    """Get the current time adjusted by the time offset for simulation"""
-    try:
-        from zoneinfo import ZoneInfo
-        ny_tz = ZoneInfo("America/New_York")
-    except ImportError:
-        # Fallback for Python <3.9
-        ny_tz = pytz.timezone("America/New_York")
+# Get timezone objects
+try:
+    from zoneinfo import ZoneInfo
+    NY_TZ = ZoneInfo("America/New_York")
+    UTC_TZ = ZoneInfo("UTC")
+except ImportError:
+    # Fallback for Python <3.9
+    NY_TZ = pytz.timezone("America/New_York")
+    UTC_TZ = pytz.UTC
+
+def parse_simulation_date(date_str):
+    """Parse simulation date string in format YYYYMMDDHH24MI to datetime object in NY timezone"""
+    if len(date_str) != 12:
+        raise ValueError("Simulation date must be in format YYYYMMDDHH24MI (12 digits)")
     
-    actual_now = datetime.now(ny_tz)
-    simulated_now = actual_now - timedelta(minutes=TIME_OFFSET_MINUTES)
-    return simulated_now, actual_now
+    try:
+        year = int(date_str[0:4])
+        month = int(date_str[4:6])
+        day = int(date_str[6:8])
+        hour = int(date_str[8:10])
+        minute = int(date_str[10:12])
+        
+        # Create datetime object with NY timezone (this is what user inputs)
+        simulation_dt_ny = datetime(year, month, day, hour, minute, tzinfo=NY_TZ)
+        return simulation_dt_ny
+    except ValueError as e:
+        raise ValueError(f"Invalid simulation date format: {e}")
+
+def ny_to_utc(dt_ny):
+    """Convert NY timezone datetime to UTC"""
+    if dt_ny.tzinfo is None:
+        dt_ny = dt_ny.replace(tzinfo=NY_TZ)
+    return dt_ny.astimezone(UTC_TZ)
+
+def utc_to_ny(dt_utc):
+    """Convert UTC datetime to NY timezone"""
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=UTC_TZ)
+    return dt_utc.astimezone(NY_TZ)
 
 def datetime_to_utc_string(dt):
     """Convert timezone-aware datetime to UTC string format for database queries"""
-    from datetime import timezone
-    
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC_TZ)
     else:
-        dt = dt.astimezone(timezone.utc)
+        dt = dt.astimezone(UTC_TZ)
     
-    # Format to match database: '2025-07-17T19:59:00+00:00'
+    # Format to match database: '2025-07-18T14:00:00+00:00'
     return dt.isoformat()
 
-def get_market_open_time(date):
-    """Get market open time for a given date (9:30 AM ET)"""
-    try:
-        from zoneinfo import ZoneInfo
-        ny_tz = ZoneInfo("America/New_York")
-    except ImportError:
-        # Fallback for Python <3.9
-        import pytz
-        ny_tz = pytz.timezone("America/New_York")
-    
-    market_open = datetime.combine(date, datetime.min.time()).replace(hour=9, minute=30, tzinfo=ny_tz)
-    
-    return market_open
-
-# Initialize model adapter
-model_adapter = ModelInferenceAdapter(model_index_path="model_artifacts/model_index.csv")
-
-
-
-def fetch_real_time_data(symbol):
-    """Fetch real-time data for a symbol from the database"""
-    simulated_now, actual_now = get_simulated_current_time()
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    if TIME_OFFSET_MINUTES > 0:
-        # In simulation mode, get the closest intraday data to the simulated time
-        cursor.execute('''
-            SELECT 
-                close, open, high, low, volume, bar_time
-            FROM intraday_minute_data
-            WHERE symbol = ? AND bar_time <= ?
-            ORDER BY bar_time DESC
-            LIMIT 1
-        ''', (symbol, datetime_to_utc_string(simulated_now)))
-
-        
-        row = cursor.fetchone()
-        if not row:
-            conn.close()
-            raise ValueError(f"No simulated real-time data found for {symbol} at {simulated_now}")
-
-
-        # Debug: Print the full row data
-        #print(f"🔍 RAW DB ROW for {symbol}: {row}")
-        #print(f"🔍 ROW TYPES: {[type(x) for x in row] if row else 'None'}")
-
-        
-        close, open_price, high, low, volume, bar_time = row
-        
-        # Create simulated real-time data based on the intraday bar
-        # Use close as last price, and create synthetic bid/ask around it
-        spread_pct = 0.001  # 0.1% spread
-        last_price = close
-        bid_price = last_price * (1 - spread_pct / 2)
-        ask_price = last_price * (1 + spread_pct / 2)
-        
-        #debug print volume
-        print(f"DEBUB  VOLUME = {volume}")
-
-        # Create real-time DataFrame
-        real_time_df = pd.DataFrame({
-            'bidPrice': [bid_price],
-            'bidSize': [100],  # Default bid size
-            'askPrice': [ask_price],
-            'askSize': [100],  # Default ask size
-            'lastPrice': [last_price],
-            'volume': [float(volume) if volume is not None else 0.0],
-            'timestamp': [simulated_now]
-        })
-        
-        print(f"📊 {symbol} simulated real-time data from {bar_time}: last=${last_price:.2f}, bid=${bid_price:.2f}, ask=${ask_price:.2f}")
-        
+def get_market_open_time(date_ny):
+    """Get market open time for a given date (9:30 AM ET) in NY timezone"""
+    if isinstance(date_ny, datetime):
+        date_only = date_ny.date()
     else:
-        # Original real-time data fetching
-        cursor.execute('''
-            SELECT 
-                last_price, bid_price, ask_price, bid_size, ask_size, volume,
-                high_price, low_price, close_price,
-                last_update_server_epoch, last_update_received_epoch
-            FROM realtime_summary
-            WHERE symbol = ?
-        ''', (symbol,))
-        
-        row = cursor.fetchone()
-        if not row:
-            conn.close()
-            raise ValueError(f"No real-time data found for {symbol}")
-        
-        (last_price, bid_price, ask_price, bid_size, ask_size, volume,
-         high_price, low_price, close_price, server_epoch, received_epoch) = row
-
-
-        #print(f"se: {server_epoch}")
-        server_epoch_pandas = pd.to_datetime(server_epoch, unit='s', utc=True)
-        #print(f"se: {server_epoch_pandas}")
-        
-        
-        # Check if we have essential data
-        if last_price is None or bid_price is None or ask_price is None:
-            raise ValueError(f"Missing essential price data for {symbol}")
-        
-        if bid_size is None or ask_size is None:
-            raise ValueError(f"Missing bid/ask size data for {symbol}")
-        
-        # Create real-time DataFrame
-        real_time_df = pd.DataFrame({
-            'bidPrice': [bid_price],
-            'bidSize': [bid_size],
-            'askPrice': [ask_price],
-            'askSize': [ask_size],
-            'lastPrice': [last_price],
-            'volume': [volume] if volume else [0],
-            'timestamp': server_epoch_pandas
-        })
+        date_only = date_ny
     
-    conn.close()
-    return real_time_df
+    market_open_ny = datetime.combine(date_only, datetime.min.time()).replace(hour=9, minute=30, tzinfo=NY_TZ)
+    return market_open_ny
+
+def get_market_close_time(date_ny):
+    """Get market close time for a given date (4:00 PM ET) in NY timezone"""
+    if isinstance(date_ny, datetime):
+        date_only = date_ny.date()
+    else:
+        date_only = date_ny
+    
+    market_close_ny = datetime.combine(date_only, datetime.min.time()).replace(hour=16, minute=0, tzinfo=NY_TZ)
+    return market_close_ny
+
+def is_market_hours(dt_ny):
+    """Check if given NY time is during market hours"""
+    market_open = get_market_open_time(dt_ny)
+    market_close = get_market_close_time(dt_ny)
+    
+    # Check if it's a weekday (Monday=0, Sunday=6)
+    if dt_ny.weekday() >= 5:  # Saturday or Sunday
+        return False
+    
+    return market_open <= dt_ny <= market_close
+
+# Initialize model adapter and historical fetcher
+model_adapter = ModelInferenceAdapter(model_index_path="model_artifacts/model_index.csv")
+historical_fetcher = LocalHistoricalSimulationFetcher(db_path=DB_PATH)
 
 
 
-
-def fetch_intraday_data(symbol, lookback_minutes=60):
-    """Fetch intraday minute data for a symbol from the database"""
-    simulated_now, actual_now = get_simulated_current_time()
+def fetch_intraday_data(symbol, simulated_now_utc):
+    """Fetch intraday minute data for a symbol from the database using historical simulation"""
+    simulation_date = simulated_now_utc.date()
     
     print(f"\n🔄 DEBUG: Fetching intraday data for {symbol}")
-    print(f"  - Simulated time: {simulated_now}")
-    print(f"  - Actual time: {actual_now}")
-    print(f"  - Time offset: {TIME_OFFSET_MINUTES} minutes")
-    print(f"  - Lookback minutes: {lookback_minutes}")
+    print(f"  - Simulated time UTC: {simulated_now_utc}")
+    print(f"  - Simulation date: {simulation_date}")
     
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    if TIME_OFFSET_MINUTES > 0:
-        # In simulation mode, get data from market open until simulated time minus 1 minute
-        market_open = get_market_open_time(simulated_now)
-        
-        # Get data from market open until simulated time minus 1 minute
-        end_time = simulated_now - timedelta(minutes=1)
-        
-        print(f"  - Market open: {market_open}")
-        print(f"  - End time: {end_time}")
-        
-        cursor.execute('''
-            SELECT 
-                bar_time, open, high, low, close, volume
-            FROM intraday_minute_data
-            WHERE symbol = ? AND bar_time <= ?
-            ORDER BY bar_time ASC
-        ''', (symbol, datetime_to_utc_string(end_time)))
-        
-        rows = cursor.fetchall()
-        print(f"  - Found {len(rows)} rows")
-        if rows:
-            print(f"  - First row timestamp: {rows[0][0]}")
-            print(f"  - Last row timestamp: {rows[-1][0]}")
-    else:
-        # In real-time mode, get last lookback_minutes of data
-        cursor.execute('''
-            SELECT 
-                bar_time, open, high, low, close, volume
-            FROM intraday_minute_data
-            WHERE symbol = ?
-            ORDER BY bar_time DESC
-            LIMIT ?
-        ''', (symbol, lookback_minutes))
-        
-        rows = cursor.fetchall()
-        print(f"  - Found {len(rows)} rows")
+    # Get data from start of day until simulated time minus 1 minute (to avoid lookahead bias)
+    # This ensures we only use data that would have been available at simulation time
+    end_time_utc = simulated_now_utc - timedelta(minutes=1)
     
-        if rows:
-            print(f"  - First row timestamp: {rows[0][0]}")
-            print(f"  - Last row timestamp: {rows[-1][0]}")
+    print(f"  - End time UTC (simulation - 1 min): {end_time_utc}")
     
+    # Query only data up to simulation time - no future data allowed
+    cursor.execute('''
+        SELECT 
+            ts_event_price, open_1min, high_1min, low_1min, close_1min, volume_1min,
+            bid_px_00, ask_px_00, bid_sz_00, ask_sz_00
+        FROM historical_simulation_intraday_data
+        WHERE symbol_price = ? AND simulation_date = ? AND datetime(ts_event_price) <= datetime(?)
+        ORDER BY datetime(ts_event_price) ASC
+    ''', (symbol, simulation_date, end_time_utc.isoformat()))
+    
+    rows = cursor.fetchall()
+
+    print(f"  - Found {len(rows)} rows up to simulation time")
+    if rows:
+        last_bar_utc = pd.to_datetime(rows[-1][0], utc=True)
+        last_bar_ny = utc_to_ny(last_bar_utc)
+        print(f"  - Last bar time: {last_bar_ny.strftime('%H:%M:%S %Z')} (NY)")
 
     conn.close()
     
     if not rows:
-        raise ValueError(f"No intraday data found for {symbol} - query returned 0 rows")
+        raise ValueError(f"No intraday data found for {symbol} up to simulation time - query returned 0 rows")
     
     # Create intraday DataFrame
     data = []
     for row in rows:
-        bar_time, open_price, high, low, close, volume = row
+        ts_event_price, open_price, high, low, close_1min, volume, bid_px_00, ask_px_00, bid_sz_00, ask_sz_00 = row
         data.append({
-            'close_1min': close,
-            'open_1min': open_price,
-            'high_1min': high,
-            'low_1min': low,
-            'volume_1min': volume if volume else 0,
-            'ts_event_clean': bar_time,
-            'symbol_price': symbol
+        'close_1min': close_1min,
+        'close': close_1min,  # Add backward compatibility
+        'open_1min': open_price,
+        'open': open_price,   # Add backward compatibility
+        'high_1min': high,
+        'high': high,         # Add backward compatibility
+        'low_1min': low,
+        'low': low,           # Add backward compatibility
+        'volume_1min': float(volume) if volume is not None else 0.0,
+        'volume': float(volume) if volume is not None else 0.0,
+        'ts_event_clean': ts_event_price,
+        'symbol_price': symbol,
+        'bidPrice': float(bid_px_00) if bid_px_00 is not None else None,
+        'askPrice': float(ask_px_00) if ask_px_00 is not None else None,
+        'bidSize': float(bid_sz_00) if bid_sz_00 is not None else None,
+        'askSize': float(ask_sz_00) if ask_sz_00 is not None else None,
+        'lastPrice': close_1min,
+        'timestamp': ts_event_price
         })
     
     intra_day_df = pd.DataFrame(data)
     
-    # Sort by timestamp (oldest first for simulation, newest first for real-time)
-    if TIME_OFFSET_MINUTES > 0:
-        intra_day_df = intra_day_df.sort_values('ts_event_clean')
-    else:
-        intra_day_df = intra_day_df.sort_values('ts_event_clean')
+    # Filter out future data after simulation time
+    intra_day_df['ts_event_clean'] = pd.to_datetime(intra_day_df['ts_event_clean'], utc=True)
+    intra_day_df = intra_day_df[intra_day_df['ts_event_clean'] <= end_time_utc]
+
+    # Sort by timestamp (oldest first for simulation)
+    intra_day_df = intra_day_df.sort_values('ts_event_clean')
     
-    print(f"📊 {symbol} fetched {len(intra_day_df)} intraday records")
+    print(f"📊 {symbol} fetched {len(intra_day_df)} intraday records (up to simulation time)")
     return intra_day_df
 
-
-
+    
 
 
 def fetch_daily_data(symbol, lookback_days=60):
-    """Fetch daily data for a symbol from the database (unchanged for simulation)"""
+    """Fetch daily data for a symbol from the database"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
@@ -291,14 +224,14 @@ def fetch_daily_data(symbol, lookback_days=60):
     # Create daily DataFrame
     data = []
     for row in rows:
-        bar_date, open_price, high, low, close, volume = row
+        bar_date, open_price, high, low, close_1min, volume = row
         data.append({
             'date': bar_date,
             'open': open_price,
             'high': high,
             'low': low,
-            'close': close,
-            'volume': volume if volume else 0,
+            'close': close_1min,
+            'volume': float(volume) if volume is not None else 0.0,
             'symbol': symbol
         })
     
@@ -309,354 +242,90 @@ def fetch_daily_data(symbol, lookback_days=60):
     
     return daily_df
 
-def get_model_scores(symbol_data):
-    """Get model scores using real data from the database (supports simulation mode)"""
-    results = []
-    
-    for row in symbol_data:
-        symbol = row['symbol']
-        try:
-            # Fetch data from database (automatically handles simulation mode)
-            real_time_df = fetch_real_time_data(symbol)
-            intra_day_df = fetch_intraday_data(symbol)
-            daily_df = fetch_daily_data(symbol)
-            
-            # Calculate base features first
-            features = model_adapter.compute_features(real_time_df, intra_day_df, daily_df)
-            print(f"🔍 FEATURES DEBUG {row['symbol']}: Volume_Percentile_Intraday = {features.get('Volume_Percentile_Intraday', 'NOT_FOUND')}")
 
-            
-            
-            # Debug: Check intraday data structure
-            print(f"🔍 Debug {symbol}: intra_day_df shape={intra_day_df.shape}, columns={list(intra_day_df.columns)}")
-            if not intra_day_df.empty:
-                print(f"   Sample data: high_1min={intra_day_df['high_1min'].iloc[-1]}, low_1min={intra_day_df['low_1min'].iloc[-1]}")
-            
-            # Apply feature optimization to create missing features
-            optimized_features = optimize_features(features, intra_day_df=intra_day_df)
-
-            # Debug: Check what features were created
-            impulse_features = {k: v for k, v in optimized_features.items() if 'Impulse' in k}
-            
-            # Get the model and run inference with optimized features
-            model = model_adapter.get_model(symbol)
-            model_features = model.features
-            
-            # Prepare feature vector in correct order using optimized features
-            feature_vector = []
-            missing_features = []
-            for feat in model_features:
-                if feat in optimized_features:
-                    feature_vector.append(optimized_features[feat])
-                else:
-                    feature_vector.append(0.0)
-                    missing_features.append(feat)
-            
-            X = pd.DataFrame([feature_vector], columns=model_features)
-
-            
-            # Run model prediction
-            threshold = 0.5
-            prediction, probability = model.predict(X, threshold=threshold)
-            
-            # Create result
-            result = {
-                'symbol': symbol,
-                'prediction': int(prediction[0]),
-                'probability': float(probability[0]),
-                'features': optimized_features,
-                'missing_features': missing_features,
-                'model_info': model.get_info(),
-                'threshold': threshold
-            }
-            results.append(result)
-            
-        except Exception as e:
-            print(f"❌ Model inference failed for {symbol}: {e}")
-            # Return failure result
-            results.append({
-                'symbol': symbol,
-                'prediction': 0,
-                'probability': 0.0,
-                'missing_features': [str(e)],
-                'threshold': 0.5,
-                'error': str(e)
-            })
-    
-    return results
-
-def fetch_latest_prices():
-    """Fetch latest prices from the database"""
-    simulated_now, actual_now = get_simulated_current_time()
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    data = []
-    
-    for symbol in SYMBOLS:
-        if TIME_OFFSET_MINUTES > 0:
-            # In simulation mode, get the closest intraday data to the simulated time
-            cursor.execute('''
-                SELECT 
-                    close, open, high, low, volume, bar_time
-                FROM intraday_minute_data
-                WHERE symbol = ? AND bar_time <= ?
-                ORDER BY bar_time DESC
-                LIMIT 1
-            ''', (symbol, datetime_to_utc_string(simulated_now)))
-            
-            row = cursor.fetchone()
-            if row:
-                close, open_price, high, low, volume, bar_time = row
-                
-                # Create simulated real-time data based on the intraday bar
-                spread_pct = 0.001  # 0.1% spread
-                last_price = close
-                bid_price = last_price * (1 - spread_pct / 2)
-                ask_price = last_price * (1 + spread_pct / 2)
-                
-                # Parse bar_time to datetime (database stores UTC, convert to NY time)
-                #last_update = pd.to_datetime(bar_time).tz_localize('UTC').tz_convert('America/New_York')
-                last_update = pd.to_datetime(bar_time)  # Already in UTC from database
+def fetch_latest_prices(simulated_now_utc):
+  """Fetch latest prices from the database using historical simulation"""
+  data = []
+  
+  for symbol in SYMBOLS:
+      try:
+          intra_day_df = fetch_intraday_data(symbol, simulated_now_utc)
+          if not intra_day_df.empty:
+              latest = intra_day_df.iloc[-1]
+              data.append({
+                  'symbol': symbol,
+                  'last_price': latest['close_1min'],
+                  'bid_price': latest.get('bidPrice'),
+                  'ask_price': latest.get('askPrice'),
+                  'bid_size': latest.get('bidSize'),
+                  'ask_size': latest.get('askSize'),
+                  'volume': latest['volume_1min'],
+                  'last_update': latest['ts_event_clean']
+              })
+          else:
+              data.append({'symbol': symbol, 'last_price': None, 'bid_price': None, 'ask_price': None, 'bid_size': None, 'ask_size': None, 'volume': None, 'last_update': None})
+      except Exception as e:
+          data.append({'symbol': symbol, 'last_price': None, 'bid_price': None, 'ask_price': None, 'bid_size': None, 'ask_size': None, 'volume': None, 'last_update': None})
+          print(f"General Error: {e}")
+  return data
 
 
-                data.append({
-                    'symbol': symbol, 
-                    'last_price': last_price, 
-                    'bid_price': bid_price,
-                    'ask_price': ask_price,
-                    'bid_size': 100,  # Default bid size
-                    'ask_size': 100,  # Default ask size
-                    'volume': volume,
-                    'last_update': last_update
-                })
-            else:
-                data.append({
-                    'symbol': symbol, 
-                    'last_price': None, 
-                    'bid_price': None,
-                    'ask_price': None,
-                    'bid_size': None,
-                    'ask_size': None,
-                    'volume': None,
-                    'last_update': None
-                })
-        else:
-            # Original real-time data fetching
-            # Get New York timezone
-            try:
-                from zoneinfo import ZoneInfo
-                ny_tz = ZoneInfo("America/New_York")
-            except ImportError:
-                # Fallback for Python <3.9
-                ny_tz = pytz.timezone("America/New_York")
-            
-            cursor.execute('''
-                SELECT 
-                    last_price, 
-                    bid_price, 
-                    ask_price, 
-                    bid_size, 
-                    ask_size, 
-                    volume,
-                    last_update_server_epoch
-                FROM realtime_summary
-                WHERE symbol = ?
-            ''', (symbol,))
-            
-            row = cursor.fetchone()
-            if row:
-                (last_price, bid_price, ask_price, bid_size, ask_size, volume, server_epoch) = row
-                if server_epoch:
-                    # Convert UTC timestamp to New York timezone
-                    utc_time = datetime.utcfromtimestamp(server_epoch)
-                    last_update = utc_time.replace(tzinfo=pytz.UTC).astimezone(ny_tz)
-                else:
-                    last_update = None
-                data.append({
-                    'symbol': symbol, 
-                    'last_price': last_price, 
-                    'bid_price': bid_price,
-                    'ask_price': ask_price,
-                    'bid_size': bid_size,
-                    'ask_size': ask_size,
-                    'volume': volume,
-                    'last_update': last_update
-                })
-            else:
-                data.append({
-                    'symbol': symbol, 
-                    'last_price': None, 
-                    'bid_price': None,
-                    'ask_price': None,
-                    'bid_size': None,
-                    'ask_size': None,
-                    'volume': None,
-                    'last_update': None
-                })
-    
-    conn.close()
-    return data
-
-def check_data_freshness():
-    """Check the freshness of real-time, historical, and intraday data"""
-    simulated_now, actual_now = get_simulated_current_time()
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    if TIME_OFFSET_MINUTES > 0:
-        # In simulation mode, check data freshness relative to simulated time
-        current_time = simulated_now
-        
-        # Check simulated real-time data freshness (latest intraday data up to simulated time)
-        cursor.execute('''
-
-        
-            SELECT MAX(bar_time) FROM intraday_minute_data
-            WHERE bar_time <= ?
-        ''', (datetime_to_utc_string(simulated_now),))
-        latest_realtime_str = cursor.fetchone()[0]
-        if latest_realtime_str:
-            latest_realtime = pd.to_datetime(latest_realtime_str).tz_convert('America/New_York')
-        else:
-            latest_realtime = None
-        
-        # Check historical data freshness (unchanged)
-        cursor.execute('''
-            SELECT MAX(bar_date) FROM daily_summary_data
-        ''')
-        latest_historical_date = cursor.fetchone()[0]
-        
-        # Check intraday data freshness up to simulated time
-        cursor.execute('''
-            SELECT MAX(bar_time) FROM intraday_minute_data
-            WHERE bar_time <= ?
-        ''', (datetime_to_utc_string(simulated_now),))
-        latest_intraday_time_str = cursor.fetchone()[0]
-        latest_intraday_time = None
-        if latest_intraday_time_str:
-            try:
-                latest_intraday_time = pd.to_datetime(latest_intraday_time_str)
-            except:
-                latest_intraday_time = None
-        
-        # Calculate latency for simulated real-time data
-        latency_seconds = None
-        if latest_realtime:
-            latency_seconds = (current_time - latest_realtime).total_seconds()
-        
-    else:
-        # Original data freshness checking
-        # Get New York timezone
-        try:
-            from zoneinfo import ZoneInfo
-            ny_tz = ZoneInfo("America/New_York")
-        except ImportError:
-            # Fallback for Python <3.9
-            ny_tz = pytz.timezone("America/New_York")
-        
-        current_time = datetime.now(ny_tz)
-        
-        # Check real-time data freshness
-        cursor.execute('''
-            SELECT MAX(last_update_server_epoch) FROM realtime_summary
-        ''')
-        latest_realtime_epoch = cursor.fetchone()[0]
-        if latest_realtime_epoch:
-            # Convert UTC timestamp to New York timezone
-            utc_time = datetime.utcfromtimestamp(latest_realtime_epoch)
-            latest_realtime = utc_time.replace(tzinfo=pytz.UTC).astimezone(ny_tz)
-        else:
-            latest_realtime = None
-        
-        # Check historical data freshness
-        cursor.execute('''
-            SELECT MAX(bar_date) FROM daily_summary_data
-        ''')
-        latest_historical_date = cursor.fetchone()[0]
-        
-        # Check intraday data freshness
-        cursor.execute('''
-            SELECT MAX(bar_time) FROM intraday_minute_data
-        ''')
-        latest_intraday_time_str = cursor.fetchone()[0]
-        latest_intraday_time = None
-        if latest_intraday_time_str:
-            try:
-                latest_intraday_time = pd.to_datetime(latest_intraday_time_str)
-            except:
-                latest_intraday_time = None
-        
-        # Calculate latency for real-time data
-        latency_seconds = None
-        if latest_realtime:
-            latency_seconds = (current_time - latest_realtime).total_seconds()
-    
-    conn.close()
-    
-    return {
-        'current_time': current_time,
-        'latest_realtime': latest_realtime,
-        'latest_historical_date': latest_historical_date,
-        'latest_intraday_time': latest_intraday_time,
-        'latency_seconds': latency_seconds,
-        'actual_time': actual_now if TIME_OFFSET_MINUTES > 0 else None
-    }
-
-def run_technical_assessment(symbol_data):
+def run_technical_assessment(symbol_data, simulated_now_utc):
     """Run technical assessment for each symbol using real calculated features"""
     results = []
     
-    # Get current time (simulated or actual)
-    simulated_now, actual_now = get_simulated_current_time()
-    current_time = simulated_now
+    # Convert to NY time for market hours check
+    current_time_ny = utc_to_ny(simulated_now_utc)
     
-    print(f"\n🔍 DEBUG: Running technical assessment")
-    print(f"  - Simulated time: {current_time}")
-    print(f"  - Actual time: {actual_now}")
-    print(f"  - Time offset: {TIME_OFFSET_MINUTES} minutes")
-    
+
     for row in symbol_data:
+        print(f"DEBUG LINE 464: {row}")
         symbol = row['symbol']
         try:
             print(f"\n📊 Processing {symbol}...")
             
-            # Fetch real data for feature calculation
-            real_time_df = fetch_real_time_data(symbol)
-            print(f"  - Real-time data shape: {real_time_df.shape}")
+            # Check if we're in market hours first
+            if not is_market_hours(current_time_ny):
+                print(f"  - Outside market hours for {symbol}")
+                results.append({
+                    'symbol': symbol,
+                    'technical_assessment': False,
+                    'assessment_reason': 'outside_market_hours'
+                })
+                continue
+            
             
             # Fetch intraday data
-            intra_day_df = fetch_intraday_data(symbol)
+            intra_day_df = fetch_intraday_data(symbol, simulated_now_utc)
             print(f"  - Intraday data shape: {intra_day_df.shape}")
             
+
+            # Fetch real data for feature calculation
+            real_time_df = intra_day_df.iloc[[-1]] if not intra_day_df.empty else pd.DataFrame()
+
+            print(f"DEBUG line 395: {real_time_df}")
+
             # Fetch daily data
             daily_df = fetch_daily_data(symbol)
             print(f"  - Daily data shape: {daily_df.shape}")
             
             # Calculate features
-            model_adapter = ModelInferenceAdapter()
             features = model_adapter.compute_features(real_time_df, intra_day_df, daily_df)
             print(f"  - Calculated features: {list(features.keys())}")
             
+            # Convert UTC timestamp to NY timestamp for technical assessment
+            ts_ny = pd.Timestamp(current_time_ny)
+            
             # Run technical assessment
-            assessment_result, assessment_reason = meets_basic_buy_conditions(features, current_time)
+            assessment_result, assessment_reason = meets_basic_buy_conditions(features, ts_ny)
             print(f"  - Technical assessment result: {assessment_result}")
             
-            # Use optimized features for technical assessment
-            ts = pd.Timestamp(current_time)
-            if bool(pd.isnull(ts)) or not isinstance(ts, pd.Timestamp):
-                ts = pd.Timestamp.now(tz=ny_tz)
-            
-            #This must always be called with features without optimize!!!!
-            #assessment_passed, assessment_reason = meets_basic_buy_conditions(features, ts)
             results.append({
                 'symbol': symbol,
                 'technical_assessment': assessment_result,
-                'assessment_reason': assessment_reason
+                'assessment_reason': assessment_reason,
+                'features': features  # Store features for later use
             })
-            
-
 
         except Exception as e:
             print(f"❌ Technical assessment failed for {symbol}: {e}")
@@ -666,45 +335,43 @@ def run_technical_assessment(symbol_data):
                 'assessment_reason': f'error: {str(e)}'
             })
     
-
     return results
 
 def main():
-    global TIME_OFFSET_MINUTES
+    global SIMULATION_DATE_NY
     
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Trading Simulation with Time Offset Support")
-    parser.add_argument('--time_offset', type=int, default=0, 
-                        help='Time offset in minutes to simulate trading in the past (0 = real-time mode)')
+    parser = argparse.ArgumentParser(description="Trading Simulation with Exact Date (Historical Mode Only)")
+    parser.add_argument('--simulation_date', type=str, required=True,
+                       help='Simulation date and time in format YYYYMMDDHH24MI (e.g., 202507181400 for July 18, 2025 14:00 NY time)')
     
     args = parser.parse_args()
-    TIME_OFFSET_MINUTES = args.time_offset
+
+    # Parse the simulation date as NY time (what user inputs)
+    simulated_now_ny = parse_simulation_date(args.simulation_date)
+    SIMULATION_DATE_NY = simulated_now_ny
+    
+    # Convert to UTC for all database operations
+    simulated_now_utc = ny_to_utc(simulated_now_ny)
     
     # Display mode information
-    if TIME_OFFSET_MINUTES > 0:
-        print(f"\n🕐 Trading Simulation (EXPERIMENTATION MODE - {TIME_OFFSET_MINUTES} minutes offset)")
-        print("=" * 80)
-        simulated_now, actual_now = get_simulated_current_time()
-        print(f"Actual time: {actual_now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        print(f"Simulated time: {simulated_now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        print(f"Time offset: {TIME_OFFSET_MINUTES} minutes")
-        print(f"Symbols: {', '.join(SYMBOLS)}")
-        print("Using historical intraday data for simulation. Press Ctrl+C to stop.\n")
-    else:
-        print("\n🚦 Trading Simulation (REAL DATA MODE)")
-        print("=" * 60)
-        print(f"Symbols: {', '.join(SYMBOLS)}")
-        print("Fetching real data every 30 seconds. Press Ctrl+C to stop.\n")
+    print(f"\n🕐 Trading Simulation (HISTORICAL MODE - EXACT DATE)")
+    print("=" * 80)
+    print(f"Simulated time New York: {simulated_now_ny.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(f"Simulated time UTC: {simulated_now_utc.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(f"Market hours check: {is_market_hours(simulated_now_ny)}")
+    print(f"Symbols: {', '.join(SYMBOLS)}")
+    print("Using historical intraday data for simulation. Press Ctrl+C to stop.\n")
     
+    # Ensure historical data is available for the simulation date
+    print("🔍 Checking historical data availability... (bypassed because local file assumed to be complete)")
+
     while True:
         try:
-            latest_data = fetch_latest_prices()
-            
-            # Check data freshness
-            data_freshness = check_data_freshness()
-            
+            latest_data = fetch_latest_prices(simulated_now_utc)
+
             # Run technical assessment first
-            technical_results = run_technical_assessment(latest_data)
+            technical_results = run_technical_assessment(latest_data, simulated_now_utc)
             
             # Filter out debug objects from technical results
             technical_results_filtered = [r for r in technical_results if 'symbol' in r]
@@ -718,9 +385,10 @@ def main():
             for row, tech_result in zip(latest_data, technical_results_filtered):
                 if tech_result['technical_assessment']:
                     try:
-                        # Fetch real data for model inference
-                        real_time_df = fetch_real_time_data(row['symbol'])
-                        intra_day_df = fetch_intraday_data(row['symbol'])
+                        intra_day_df = fetch_intraday_data(row['symbol'], simulated_now_utc)
+
+                        real_time_df = intra_day_df.iloc[[-1]] if not intra_day_df.empty else pd.DataFrame()
+
                         daily_df = fetch_daily_data(row['symbol'])
                         
                         # Calculate base features first
@@ -733,7 +401,6 @@ def main():
                         
                         # Apply feature optimization to create missing features
                         optimized_features = optimize_features(features, intra_day_df=intra_day_df)
-                        #features must never be optimized for BUY signal
                         
                         # Debug: Check what features were created
                         impulse_features = {k: v for k, v in optimized_features.items() if 'Impulse' in k}
@@ -798,45 +465,37 @@ def main():
                 
                 # Get volume percentile for display
                 volume_percentile = "N/A"
-                if tech_result['technical_assessment'] and 'features' in model_result:
-                    #volume_percentile = f"{model_result['features'].get('Volume_Percentile_Intraday', 0):.3f}"
-                    volume_percentile = f"{features.get('Volume_Percentile_Intraday', 0):.3f}"
-                elif not tech_result['technical_assessment']:
+                if tech_result['technical_assessment'] and 'features' in tech_result:
+                    volume_percentile = f"{tech_result['features'].get('Volume_Percentile_Intraday', 0):.3f}"
+                elif not tech_result['technical_assessment'] and 'features' in tech_result:
                     # Try to get volume percentile even for failed assessments
-                    try:
-                        real_time_df = fetch_real_time_data(row['symbol'])
-                        intra_day_df = fetch_intraday_data(row['symbol'])
-                        daily_df = fetch_daily_data(row['symbol'])
-                        features = model_adapter.compute_features(real_time_df, intra_day_df, daily_df)
-                        optimized_features = optimize_features(features, intra_day_df=intra_day_df)
-                        volume_percentile = f"{features.get('Volume_Percentile_Intraday', 0):.3f}"
-                        
-                        # DEBUG: Print volume information
-                        current_volume = real_time_df['volume'].iloc[0] if 'volume' in real_time_df.columns else 0
-                        volume_col = 'volume_1min' if 'volume_1min' in intra_day_df.columns else 'volume'
-                        if volume_col in intra_day_df.columns:
-                            day_volumes = intra_day_df[volume_col].dropna()
-                            print(f"🔍 DEBUG {row['symbol']}: current_volume={current_volume}, day_volumes_count={len(day_volumes)}, day_volumes_range=[{day_volumes.min():.0f}, {day_volumes.max():.0f}]")
-                    except:
-                        volume_percentile = "N/A"
+                    volume_percentile = f"{tech_result['features'].get('Volume_Percentile_Intraday', 0):.3f}"
 
-                                # Convert timezone just for display
+                # Convert last_update from UTC to NY for display
                 def format_last_update_print(last_update):
                     if not last_update:
                         return 'N/A'
-                    if last_update.tzinfo:
-                        # Convert UTC to NY time for display
-                        print(f"{last_update}")
-                        #exit()
-                        #ny_time = last_update.tz_convert('America/New_York')
-                        return last_update.strftime('%H:%M:%S')
-                    else:
-                        return last_update.strftime('%H:%M:%S')
+                    try:
+                        if last_update.tzinfo:
+                            # Convert UTC to NY time for display
+                            ny_time = utc_to_ny(last_update)
+                            return ny_time.strftime('%H:%M:%S %Z')
+                        else:
+                            # If no timezone info, assume UTC and convert
+                            utc_time = last_update.replace(tzinfo=UTC_TZ)
+                            ny_time = utc_to_ny(utc_time)
+                            return ny_time.strftime('%H:%M:%S %Z')
+                    except Exception as e:
+                        print(f"⚠️ Timezone conversion error for {last_update}: {e}")
+                        return str(last_update.time()) if hasattr(last_update, 'time') else 'N/A'
+
+                format_last_update_time = lambda ts: utc_to_ny(pd.to_datetime(ts, utc=True)).strftime('%H:%M:%S %Z') if ts else 'N/A'
+
                 
                 table.append([
                     row['symbol'],
                     f"${row['last_price']:.2f}" if row['last_price'] is not None else 'N/A',
-                    format_last_update_print(row['last_update']) if row['last_update'] else 'N/A',
+                    format_last_update_time(row['last_update']),
                     tech_status,
                     prediction_text if tech_result['technical_assessment'] else 'N/A',
                     f"{model_result.get('probability', 0):.4f}" if tech_result['technical_assessment'] and 'probability' in model_result else 'N/A',
@@ -845,11 +504,8 @@ def main():
                     f"{model_result.get('threshold', 0):.3f}" if tech_result['technical_assessment'] and 'threshold' in model_result else 'N/A'
                 ])
             
-            # Display current time (simulated or actual)
-            current_time_display = data_freshness['current_time']
-            print("\n" + current_time_display.strftime('%Y-%m-%d %H:%M:%S %Z'))
-            if TIME_OFFSET_MINUTES > 0:
-                print(f"(Simulated time - actual time: {data_freshness['actual_time'].strftime('%Y-%m-%d %H:%M:%S %Z')})")
+            # Display current time (simulated) in NY timezone
+            print("(Historical Simulation Mode)")
             
             print(tabulate(table, headers=["Symbol", "Last Price", "Last Update", "Tech Assessment", "Prediction", "Probability", "Vol %", "Missing Features", "Threshold"], tablefmt="fancy_grid"))
 
@@ -872,19 +528,12 @@ def main():
             print(f"Number of BUY signals: {num_buy_signals}")
             print(f"Symbols with missing features: {', '.join(symbols_with_missing) if symbols_with_missing else 'None'}")
             print("\n--- DATA FRESHNESS ---")
-            if TIME_OFFSET_MINUTES > 0:
-                print(f"Simulation mode: {TIME_OFFSET_MINUTES} minutes offset")
-                print(f"Actual time: {data_freshness['actual_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
-                print(f"Simulated time: {data_freshness['current_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            else:
-                print(f"Current time: {data_freshness['current_time'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            print(f"Last real-time update: {data_freshness['latest_realtime'].strftime('%Y-%m-%d %H:%M:%S %Z') if data_freshness['latest_realtime'] else 'N/A'}")
-            print(f"Real-time latency: {data_freshness['latency_seconds']:.1f}s" if data_freshness['latency_seconds'] is not None else "Real-time latency: N/A")
-            print(f"Last historical data: {data_freshness['latest_historical_date'] if data_freshness['latest_historical_date'] else 'N/A'}")
-            print(f"Last intraday data: {data_freshness['latest_intraday_time'].strftime('%Y-%m-%d %H:%M:%S %Z') if data_freshness['latest_intraday_time'] else 'N/A'}")
+            print(f"Historical simulation mode: Exact date ({simulated_now_ny.strftime('%Y-%m-%d %H:%M:%S %Z')})")
+            print(f"Market hours: {is_market_hours(simulated_now_ny)}")
             print("========================================\n")
 
             time.sleep(FETCH_INTERVAL)
+            simulated_now_utc += timedelta(seconds=55) 
             
         except KeyboardInterrupt:
             print("\n🛑 Simulation stopped by user.")
@@ -894,4 +543,4 @@ def main():
             time.sleep(FETCH_INTERVAL)
 
 if __name__ == "__main__":
-    main() 
+    main()

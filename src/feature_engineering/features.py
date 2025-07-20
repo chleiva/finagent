@@ -250,6 +250,7 @@ class FeatureCalculator:
         
         return features
     
+
     def bid_ask_spread(self) -> float:
         """Calculate current bid-ask spread as percentage of mid-price."""
         try:
@@ -257,28 +258,29 @@ class FeatureCalculator:
             bid_price = float(self.rt['bidPrice'].iloc[0])
             
             if ask_price <= 0 or bid_price <= 0 or ask_price <= bid_price:
-                return 0.0
+                return np.nan
             
-            # Convert to percentage of mid-price for normalization
             mid_price = (ask_price + bid_price) / 2
             spread = ask_price - bid_price
             
-            return (spread / mid_price) * 100  # Return as percentage
-        except:
-            return 0.0
-    
+            return (spread / mid_price) * 100  # % of mid-price
+        except (KeyError, IndexError, ValueError):
+            return np.nan
+
+
     def order_book_imbalance(self) -> float:
         """Calculate order book imbalance at NBBO."""
         try:
             bid_vol = float(self.rt['bidSize'].iloc[0])
             ask_vol = float(self.rt['askSize'].iloc[0])
+
+            if bid_vol < 0 or ask_vol < 0 or (bid_vol + ask_vol == 0):
+                return np.nan
             
-            if bid_vol < 0 or ask_vol < 0:
-                return 0.0
-                
-            return self.safe_divide(bid_vol - ask_vol, bid_vol + ask_vol, 0.0)
-        except:
-            return 0.0
+            return self.safe_divide(bid_vol - ask_vol, bid_vol + ask_vol, np.nan)
+        except (KeyError, IndexError, ValueError):
+            return np.nan
+
     
     def price_position_in_spread(self) -> float:
         """Calculate where last trade occurred within the spread."""
@@ -306,20 +308,20 @@ class FeatureCalculator:
     def mid_price_momentum(self) -> float:
         """Calculate rate of change in bid-ask midpoint."""
         if self.intra.empty or len(self.intra) < 5:  # Need at least 5 periods for stable momentum
-            return 0.0
+            return np.nan
             
         try:
             # Use available bid/ask data from intraday or calculate from OHLC
             if 'bid_px_00' in self.intra.columns and 'ask_px_00' in self.intra.columns:
                 recent_data = self.intra[['bid_px_00', 'ask_px_00']].tail(5).dropna()
                 if len(recent_data) < 5:
-                    return 0.0
+                    return  np.nan
                 recent_data['mid_price'] = (recent_data['bid_px_00'] + recent_data['ask_px_00']) / 2
             else:
                 # Fallback to using high+low as proxy for mid price
                 recent_data = self.intra[['high_1min', 'low_1min']].tail(5).dropna()
                 if len(recent_data) < 5:
-                    return 0.0
+                    return np.nan
                 recent_data['mid_price'] = (recent_data['high_1min'] + recent_data['low_1min']) / 2
             
             # Calculate momentum over 5-period window for stability
@@ -331,7 +333,7 @@ class FeatureCalculator:
             # For 5-minute window, cap momentum at reasonable range for liquid stocks
             return float(np.clip(momentum, -2.0, 2.0))  # ±2% max in 5 minutes
         except:
-            return 0.0
+            return np.nan
     
     def spread_percentile_20(self) -> float:
         """Calculate current spread percentile vs 20-period rolling distribution (robust version)."""
@@ -440,31 +442,31 @@ class FeatureCalculator:
             
         except:
             return 0.0
-    
+
+
     def volume_rate_of_change(self) -> float:
         """Calculate volume rate of change with robust bounds."""
-        if self.intra.empty or len(self.intra) < 2:
-            return 0.0
-            
         try:
-            volumes = self.intra['volume_1min'].tail(2)
+            if self.intra.empty or len(self.intra) < 2:
+                return np.nan
+
+            volumes = self.intra['volume_1min'].tail(2).dropna()
             if len(volumes) < 2:
-                return 0.0
-            
+                return np.nan
+
             current_vol = float(volumes.iloc[-1])
             previous_vol = float(volumes.iloc[-2])
-            
+
             if previous_vol <= 0:
-                return 0.0 if current_vol <= 0 else 500.0  # Cap at 500% instead of 1000%
-            
-            # Calculate the actual percentage change
-            change = (current_vol - previous_vol) / previous_vol * 100
-            
-            # ROBUST CLIPPING: More conservative bounds
-            return float(np.clip(change, -95.0, 500.0))  # Reduced upper bound
-        except:
-            return 0.0
-    
+                return np.nan if current_vol <= 0 else 500.0  # Cap single-bar spike
+
+            change_pct = (current_vol - previous_vol) / previous_vol * 100
+            return float(np.clip(change_pct, -95.0, 500.0))  # Cap extreme swings
+        except (KeyError, IndexError, ValueError, TypeError):
+            return np.nan
+
+
+
     def price_impact(self) -> float:
         """Calculate normalized price impact (basis points per $1000 volume)."""
         if self.intra.empty or len(self.intra) < 3:
