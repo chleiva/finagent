@@ -7,6 +7,13 @@ from datetime import datetime, timedelta
 import pandas as pd
 from tabulate import tabulate
 import pytz
+from buy_sell import PositionManager
+import uuid
+
+
+
+simulation_id = str(uuid.uuid4())  # Generate unique simulation ID
+current_cash = 10000.0  # Starting balance
 
 # Add parent directories to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -19,7 +26,10 @@ from feature_engineering.feature_optimizer import optimize_features
 
 DB_PATH = 'database/realtime_market_data.db'
 SYMBOLS = ["NVDA", "MSFT", "AAPL", "AMZN", "GOOGL", "META", "AVGO", "TSLA", "NFLX", "COST"]
-FETCH_INTERVAL = 5
+FETCH_INTERVAL = 0
+
+
+position_manager = PositionManager(DB_PATH)
 
 # Get timezone objects
 try:
@@ -176,6 +186,8 @@ class TradingProcessor:
         self.time_manager = TimeManager()
     
     def process_symbols(self, symbols, simulated_now_utc):
+        global current_cash
+        global simulation_id
         """Process all symbols - technical assessment and model inference combined"""
         current_time_ny = self.time_manager.convert_time(simulated_now_utc, 'NY')
         
@@ -201,6 +213,9 @@ class TradingProcessor:
                 
                 # Calculate features
                 features = self.model_adapter.compute_features(real_time_df, intra_day_df, daily_df)
+
+                #print(f"DEBUG features: {features}")
+
                 
                 # Technical assessment
                 ts_ny = pd.Timestamp(current_time_ny)
@@ -210,14 +225,46 @@ class TradingProcessor:
                 model_result = {}
                 if assessment_result:
                     model_result = self._run_model_inference(symbol, features, intra_day_df, real_time_df, daily_df)
-                
+
+                                
                 results.append(ResultBuilder.build_result(
                     symbol, technical_assessment=assessment_result,
                     assessment_reason=assessment_reason, features=features,
                     model_result=model_result, symbol_data=symbol_data))
+
                 
             except Exception as e:
                 results.append(ResultBuilder.build_error_result(symbol, e))
+        
+        
+        # In your results processing loop, add:
+        for result in results:
+
+            if (
+                    result['technical_assessment']
+                    and result.get('model_result', {}).get('prediction', 0) == 1
+                    and result.get('model_result', {}).get('probability', 0) > 0.7
+                ):
+
+                # BUY signal detected
+                current_cash = position_manager.buy(
+                    simulation_id=simulation_id,
+                    symbol=result['symbol'],
+                    current_price=result['symbol_data']['last_price'],
+                    features=result['features'],
+                    simulation_time_utc=simulated_now_utc,
+                    current_cash=current_cash
+                )
+            
+            # Always check for sell conditions
+            current_cash = position_manager.sell(
+                symbol=result['symbol'],
+                simulation_time_utc=simulated_now_utc,
+                current_cash=current_cash,
+                simulation_id=simulation_id,
+                current_price=result['symbol_data']['last_price']
+            )
+                
         
         return results
     
@@ -265,7 +312,7 @@ class TradingProcessor:
             X = pd.DataFrame([feature_vector], columns=model_features)
             
             # Run prediction
-            threshold = 0.5
+            threshold = 0.9
             prediction, probability = model.predict(X, threshold=threshold)
             
             return {
@@ -273,7 +320,7 @@ class TradingProcessor:
                 'missing_features': missing_features, 'threshold': threshold
             }
         except Exception as e:
-            return {'prediction': 0, 'probability': 0.0, 'missing_features': [str(e)], 'threshold': 0.5, 'error': str(e)}
+            return {'prediction': 0, 'probability': 0.0, 'missing_features': [str(e)], 'threshold': 0.9, 'error': str(e)}
 
 class DisplayManager:
     def __init__(self, time_manager):
@@ -281,6 +328,7 @@ class DisplayManager:
     
     def display_results(self, results, simulated_now_ny):
         """Display results in table format"""
+        global current_cash
         table = []
         for result in results:
             symbol = result['symbol']
@@ -305,10 +353,10 @@ class DisplayManager:
                 formatted_time,
                 tech_status,
                 prediction_text if result['technical_assessment'] else 'N/A',
-                f"{model_result.get('probability', 0):.4f}" if result['technical_assessment'] and 'probability' in model_result else 'N/A',
+                f"{model_result.get('probability', 0):.2f}" if result['technical_assessment'] and 'probability' in model_result else 'N/A',
                 volume_percentile,
                 len(model_result.get('missing_features', [])) if result['technical_assessment'] else 'N/A',
-                f"{model_result.get('threshold', 0):.3f}" if result['technical_assessment'] and 'threshold' in model_result else 'N/A'
+                f"{model_result.get('threshold', 0):.2f}" if result['technical_assessment'] and 'threshold' in model_result else 'N/A'
             ])
         
         print("(Historical Simulation Mode)")
@@ -317,6 +365,8 @@ class DisplayManager:
                       tablefmt="fancy_grid"))
         
         self._print_summary(results, simulated_now_ny)
+
+        position_manager.print_position_summary(simulation_id, current_cash)
     
     def _format_time(self, timestamp):
         """Format timestamp for display"""
@@ -370,6 +420,12 @@ def main():
     # Main simulation loop
     while True:
         try:
+
+            # Convert simulated_now_utc to NY time for market check
+            current_time_ny = time_manager.convert_time(simulated_now_utc, 'NY')
+            if current_time_ny.hour > 16 or (current_time_ny.hour == 15 and current_time_ny.minute > 55):
+                print(f"\n🛑 Exiting: Simulated time {current_time_ny.strftime('%Y-%m-%d %H:%M:%S %Z')} is approching NYSE close (16:00).")
+                break
             # Process all symbols
             results = processor.process_symbols(SYMBOLS, simulated_now_utc)
             
@@ -387,6 +443,7 @@ def main():
         except Exception as e:
             print(f"❌ Error: {e}")
             time.sleep(FETCH_INTERVAL)
+            exit()
 
 if __name__ == "__main__":
     main()

@@ -1398,12 +1398,12 @@ def calculate_features(real_time_df: pd.DataFrame,
         features = calculator.calculate_all_features()
         
         # Run validation if requested
-        if validate:
-            warnings = calculator.validate_feature_consistency(features)
-            if warnings:
-                logger.warning("Feature consistency warnings:")
-                for feature, warning in warnings.items():
-                    logger.warning(f"  {feature}: {warning}")
+        #if validate:
+            #warnings = calculator.validate_feature_consistency(features)
+            #if warnings:
+                #logger.warning("Feature consistency warnings:")
+                #for feature, warning in warnings.items():
+                    #logger.warning(f"  {feature}: {warning}")
         
         return features
     except Exception as e:
