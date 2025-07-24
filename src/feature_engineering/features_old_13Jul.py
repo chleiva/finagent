@@ -837,10 +837,16 @@ class FeatureCalculator:
             
             # Calculate base risk distance
             atr_absolute = (atr_pct / 100) * current_price
-            risk_distance = atr_multiplier * atr_absolute
-            
-            # Stop loss level
+
+
+            max_risk_pct = 0.006  # 0.6%
+            max_risk_amount = max_risk_pct * current_price
+            risk_distance = min(risk_distance, max_risk_amount)
+
+            # Standard 1R stop loss
             stop_loss = current_price - risk_distance
+
+
             
             # Multiple take profit targets
             targets = {}

@@ -21,6 +21,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 # Import technical assessment function
 from feature_engineering.buy_label import meets_basic_buy_conditions
+from feature_engineering.strict_higher_swing_lows import strict_higher_swing_lows
+from feature_engineering.strict_higher_swing_lows import adaptive_higher_swing_lows
+
 from inference.model_inference_adapter import ModelInferenceAdapter
 from feature_engineering.feature_optimizer import optimize_features
 
@@ -185,10 +188,11 @@ class TradingProcessor:
         self.model_adapter = model_adapter
         self.time_manager = TimeManager()
     
+    
     def process_symbols(self, symbols, simulated_now_utc):
         global current_cash
         global simulation_id
-        """Process all symbols - technical assessment and model inference combined"""
+        """Process all symbols - technical assessment and model inference combined with swing low detection"""
         current_time_ny = self.time_manager.convert_time(simulated_now_utc, 'NY')
         
         # Fetch latest prices for all symbols
@@ -216,37 +220,240 @@ class TradingProcessor:
 
                 #print(f"DEBUG features: {features}")
 
+                # ===== SWING LOW DETECTION =====
+                swing_low_minutes = []
+                is_swing_low = False
+                swing_low_match_info = "not_detected"
                 
-                # Technical assessment
+                # Perform swing low detection if we have sufficient intraday data
+                if not intra_day_df.empty and len(intra_day_df) > 100:  # Need sufficient data points
+                    try:
+                        print(f"\n🔍 PERFORMING SWING LOW DETECTION FOR {symbol}...")
+                        
+                        # Prepare data for swing detection (ensure proper datetime index and columns)
+                        swing_detection_df = intra_day_df.copy()
+                        
+                        # Ensure we have required columns - adapt to your actual column names
+                        price_col = 'close'  # Adjust based on your data structure
+                        vwap_col = 'vwap'    # Adjust based on your data structure
+                        
+                        # Check if columns exist, if not try common alternatives
+                        if price_col not in swing_detection_df.columns:
+                            for alt_col in ['Close', 'close_price', 'last_price', 'price']:
+                                if alt_col in swing_detection_df.columns:
+                                    price_col = alt_col
+                                    break
+                        
+                        if vwap_col not in swing_detection_df.columns:
+                            for alt_col in ['VWAP', 'vwap_price', 'volume_weighted_price']:
+                                if alt_col in swing_detection_df.columns:
+                                    vwap_col = alt_col
+                                    break
+                        
+                        # Only proceed if we have the required columns
+                        if price_col in swing_detection_df.columns:
+                            print(f"   📊 Using price column: {price_col}")
+                            if vwap_col in swing_detection_df.columns:
+                                print(f"   📊 Using VWAP column: {vwap_col}")
+                            else:
+                                print(f"   ⚠️  VWAP column not found, using price-only detection")
+                                vwap_col = None
+                            
+                            # Run STRICT higher swing low detection
+                            print(f"   🔍 Detecting STRICT higher swing lows...")
+                            strict_swing_lows_df = strict_higher_swing_lows(
+                                swing_detection_df,
+                                price_col=price_col,
+                                window=4,
+                                max_gap_minutes=40,
+                                vwap_col=vwap_col,
+                                vwap_tolerance=0.5,
+                                debug=False
+                            )
+                            
+                            # Run ADAPTIVE higher swing low detection
+                            print(f"   🔍 Detecting ADAPTIVE higher swing lows...")
+                            adaptive_swing_lows_df = adaptive_higher_swing_lows(
+                                swing_detection_df,
+                                price_col=price_col,
+                                window=4,
+                                max_gap_minutes=40,
+                                vwap_col=vwap_col,
+                                vwap_tolerance=0.5,
+                                debug=False
+                            )
+                            
+                            # Merge results from both methods
+                            print(f"   📊 Merging results from both methods...")
+                            all_swing_lows_df = pd.DataFrame()
+                            
+                            if not strict_swing_lows_df.empty:
+                                strict_copy = strict_swing_lows_df.copy()
+                                strict_copy['detection_method'] = 'strict'
+                                all_swing_lows_df = pd.concat([all_swing_lows_df, strict_copy])
+                                
+                            if not adaptive_swing_lows_df.empty:
+                                adaptive_copy = adaptive_swing_lows_df.copy()
+                                adaptive_copy['detection_method'] = 'adaptive'
+                                all_swing_lows_df = pd.concat([all_swing_lows_df, adaptive_copy])
+
+                            # Remove duplicate timestamps and merge detection methods
+                            if not all_swing_lows_df.empty:
+                                # Sort by timestamp
+                                all_swing_lows_df = all_swing_lows_df.sort_index()
+                                
+                                # Group by timestamp and combine detection methods
+                                merged_swing_lows = []
+                                current_timestamp = None
+                                current_group = []
+                                
+                                for timestamp, row in all_swing_lows_df.iterrows():
+                                    if current_timestamp is None or timestamp == current_timestamp:
+                                        current_timestamp = timestamp
+                                        current_group.append(row)
+                                    else:
+                                        # Process the previous group
+                                        if current_group:
+                                            merged_row = current_group[0].copy()
+                                            methods = [r['detection_method'] for r in current_group]
+                                            merged_row['detection_method'] = '+'.join(sorted(set(methods)))
+                                            merged_swing_lows.append((current_timestamp, merged_row))
+                                        
+                                        # Start new group
+                                        current_timestamp = timestamp
+                                        current_group = [row]
+                                
+                                # Process the last group
+                                if current_group:
+                                    merged_row = current_group[0].copy()
+                                    methods = [r['detection_method'] for r in current_group]
+                                    merged_row['detection_method'] = '+'.join(sorted(set(methods)))
+                                    merged_swing_lows.append((current_timestamp, merged_row))
+                                
+                                # Create final DataFrame
+                                if merged_swing_lows:
+                                    final_swing_lows_df = pd.DataFrame([row for _, row in merged_swing_lows], 
+                                                                    index=[ts for ts, _ in merged_swing_lows])
+                                    
+                                    # Convert to minute timestamps for comparison
+                                    swing_low_times = final_swing_lows_df.index
+                                    for swing_time in swing_low_times:
+                                        swing_time_utc = swing_time.tz_convert('UTC')
+                                        rounded_minute_utc = swing_time_utc.floor('min')
+                                        swing_low_minutes.append(rounded_minute_utc)
+                                    
+                                    # Remove duplicates and sort
+                                    swing_low_minutes = sorted(list(set(swing_low_minutes)))
+                                    
+                                    print(f"   ✅ Found {len(final_swing_lows_df)} total swing lows")
+                                    print(f"   🎯 Methods breakdown:")
+                                    method_counts = final_swing_lows_df['detection_method'].value_counts()
+                                    for method, count in method_counts.items():
+                                        print(f"      {method}: {count}")
+                                else:
+                                    print(f"   ❌ No swing lows detected after merging")
+                            else:
+                                print(f"   ❌ No swing lows detected by either method")
+                        else:
+                            print(f"   ❌ Required price column not found in data")
+                            
+                    except Exception as swing_error:
+                        print(f"   ❌ Error in swing low detection: {swing_error}")
+                        swing_low_minutes = []
+                else:
+                    print(f"   ⚠️  Insufficient data for swing low detection ({len(intra_day_df)} rows)")
+
+                # ===== CHECK IF CURRENT TIME IS A SWING LOW =====
                 ts_ny = pd.Timestamp(current_time_ny)
-                assessment_result, assessment_reason = meets_basic_buy_conditions(features, ts_ny)
+                if swing_low_minutes:
+                    # Convert current time to UTC and round to minute for comparison
+                    ts_utc = ts_ny.tz_convert('UTC') if ts_ny.tz is not None else ts_ny
+                    current_minute = ts_utc.floor('min')
+                    
+                    # Check if current minute matches any swing low minute
+                    for i, swing_minute in enumerate(swing_low_minutes):
+                        # Allow small time differences (within 1 minute)
+                        time_diff = abs((current_minute - swing_minute).total_seconds())
+                        if time_diff <= 60:  # Within 1 minute
+                            is_swing_low = True
+                            swing_low_match_info = f"matched_swing_low_{i+1}_diff_{time_diff}s"
+                            break
+                    
+                    if not is_swing_low:
+                        swing_low_match_info = f"no_match_checked_{len(swing_low_minutes)}_swing_lows"
+                else:
+                    swing_low_match_info = "no_swing_lows_detected"
+
+                # ===== TECHNICAL ASSESSMENT WITH SWING LOW REQUIREMENT =====
+                # First run the basic technical conditions
+                initial_assessment_result, initial_assessment_reason = meets_basic_buy_conditions(features, ts_ny)
                 
-                # Model inference (only if technical assessment passes)
+                # Enhanced logging with swing low status
+                print(f"\n🔍 ASSESSMENT FOR {symbol} at {ts_ny}:")
+                print(f"   📊 Initial technical conditions: {initial_assessment_result} ({initial_assessment_reason})")
+                print(f"   🎯 Swing low status: {is_swing_low} ({swing_low_match_info})")
+
+                # ===== CRITICAL: REQUIRE SWING LOW FOR TECHNICAL CONDITIONS TO PASS =====
+                if initial_assessment_result and not is_swing_low:
+                    print(f"   ❌ REJECTED: Technical conditions met but NOT at a swing low")
+                    assessment_result = False
+                    assessment_reason = "rejected_not_at_swing_low"
+                elif initial_assessment_result and is_swing_low:
+                    print(f"   ✅ APPROVED: Technical conditions met AND at a swing low!")
+                    assessment_result = True
+                    assessment_reason = f"{initial_assessment_reason}_at_swing_low"
+                elif not initial_assessment_result and is_swing_low:
+                    print(f"   ❌ At swing low but technical conditions failed: {initial_assessment_reason}")
+                    assessment_result = False
+                    assessment_reason = f"at_swing_low_but_{initial_assessment_reason}"
+                else:
+                    print(f"   ❌ Neither swing low nor technical conditions met")
+                    assessment_result = False
+                    assessment_reason = f"no_swing_low_and_{initial_assessment_reason}"
+
+                print(f"   🎯 FINAL ASSESSMENT: {assessment_result} ({assessment_reason})")
+                
+                # Model inference (only if technical assessment passes - which now requires swing low)
                 model_result = {}
                 if assessment_result:
+                    print(f"   🚀 Running model inference for swing low signal...")
                     model_result = self._run_model_inference(symbol, features, intra_day_df, real_time_df, daily_df)
+                else:
+                    print(f"   ⏸️  Skipping model inference - requirements not met")
 
+                # Add swing low information to the result
+                enhanced_features = features.copy() if features else {}
+                enhanced_features['is_swing_low'] = is_swing_low
+                enhanced_features['swing_low_info'] = swing_low_match_info
+                enhanced_features['swing_lows_detected'] = len(swing_low_minutes)
+                enhanced_features['initial_technical_passed'] = initial_assessment_result
                                 
                 results.append(ResultBuilder.build_result(
                     symbol, technical_assessment=assessment_result,
-                    assessment_reason=assessment_reason, features=features,
+                    assessment_reason=assessment_reason, features=enhanced_features,
                     model_result=model_result, symbol_data=symbol_data))
 
                 
             except Exception as e:
+                print(f"❌ Error processing {symbol}: {e}")
                 results.append(ResultBuilder.build_error_result(symbol, e))
         
         
-        # In your results processing loop, add:
+        # In your results processing loop - now only swing low signals get through
         for result in results:
 
             if (
-                    result['technical_assessment']
+                    result['technical_assessment']  # This now REQUIRES swing low
                     and result.get('model_result', {}).get('prediction', 0) == 1
                     and result.get('model_result', {}).get('probability', 0) > 0.7
                 ):
 
-                # BUY signal detected
+                # At this point, we know it's DEFINITELY at a swing low
+                swing_low_info = result.get('features', {}).get('swing_low_info', 'unknown')
+                
+                print(f"🎯 SWING LOW BUY SIGNAL for {result['symbol']}! ({swing_low_info})")
+                
+                # BUY signal detected - guaranteed to be at swing low
                 current_cash = position_manager.buy(
                     simulation_id=simulation_id,
                     symbol=result['symbol'],
@@ -255,6 +462,9 @@ class TradingProcessor:
                     simulation_time_utc=simulated_now_utc,
                     current_cash=current_cash
                 )
+            elif result.get('features', {}).get('initial_technical_passed', False):
+                # This means technical conditions were good but not at swing low
+                print(f"⚠️  Skipped {result['symbol']}: Good technicals but not at swing low")
             
             # Always check for sell conditions
             current_cash = position_manager.sell(

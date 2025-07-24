@@ -1,3 +1,4 @@
+#New Features Library 22 Jul 2025
 import pandas as pd
 import numpy as np
 from typing import Dict, Tuple, Optional, List, Union
@@ -880,12 +881,15 @@ class FeatureCalculator:
             
             # Stop loss level
             stop_loss = current_price - risk_distance
+
+            #for take win, take_win at least 0.06
+            take_win_distance = max(0.0020 * current_price, risk_distance)
             
             # Multiple take profit targets
             targets = {}
             target_mapping = {1.0: '1R_Target', 1.5: '1_5R_Target', 2.0: '2R_Target', 3.0: '3R_Target', 4.0: '4R_Target'}
             for r_multiple in [1.0, 1.5, 2.0, 3.0, 4.0]:
-                target_price = current_price + (r_multiple * risk_distance)
+                target_price = current_price +  (r_multiple * take_win_distance)
                 key_name = target_mapping[r_multiple]
                 targets[key_name] = round(target_price, 2)
             

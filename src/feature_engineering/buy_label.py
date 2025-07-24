@@ -22,19 +22,19 @@ def meets_basic_buy_conditions(features: Dict, current_time: pd.Timestamp) -> Tu
     Returns:
         Tuple of (condition_met: bool, reason: str)
     """
-    current_time_only = current_time.time()
+    #current_time_only = current_time.time()
     
     # Check if it's during market hours
-    if current_time_only < MARKET_OPEN or current_time_only > MARKET_CLOSE:
-        return False, "outside_market_hours"
+    #if current_time_only < MARKET_OPEN or current_time_only > MARKET_CLOSE:
+    #    return False, "outside_market_hours"
     
     # Must be at least 30 minutes after market open
-    if current_time_only < MIN_TIME_AFTER_OPEN:
-        return False, "too_early_after_open"
+    #if current_time_only < MIN_TIME_AFTER_OPEN:
+    #    return False, "too_early_after_open"
     
     # Must be at least 1 hour before market close
-    if current_time_only > MAX_TIME_BEFORE_CLOSE:
-        return False, "too_close_to_close"
+    #if current_time_only > MAX_TIME_BEFORE_CLOSE:
+    #    return False, "too_close_to_close"
     
     # Check if we have valid R-levels
     for field in REQUIRED_FIELDS:
@@ -48,29 +48,29 @@ def meets_basic_buy_conditions(features: Dict, current_time: pd.Timestamp) -> Tu
     target_1r = features['1R_Target']
     
     # Ensure stop loss is below current price and target is above
-    if stop_loss >= current_price:
-        return False, "stop_loss_above_price"
-    if target_1r <= current_price:
-        return False, "target_below_price"
+    #if stop_loss >= current_price:
+    #    return False, "stop_loss_above_price"
+    #if target_1r <= current_price:
+    #    return False, "target_below_price"
 
     # Volume should be at least 40th percentile of the day
-    if features.get('Volume_Percentile_Intraday', 0) < 0.4:
-        return False, "volume_percentile_too_low"
+    #if features.get('Volume_Percentile_Intraday', 0) < 0.4:
+    #    return False, "volume_percentile_too_low"
     
     # Check for reasonable ATR distance (not too tight or too wide)
-    atr_pct = (features['ATR_Distance'] / current_price) * 100
+    #atr_pct = (features['ATR_Distance'] / current_price) * 100
     
     # ATR should be between 0.01% and 3% of current price
-    if atr_pct < 0.01:
-        return False, "atr_too_tight"
-    if atr_pct > 3.0:
-        return False, "atr_too_wide"
+    #if atr_pct < 0.01:
+    #    return False, "atr_too_tight"
+    #if atr_pct > 3.0:
+    #    return False, "atr_too_wide"
     
     # Optional: Add more technical conditions
     # Example: Check if we have volume data and it's reasonable
-    volume = features.get('volume', 0)
-    if volume > 0 and volume < 100:  # Minimum volume threshold
-        return False, "volume_too_low"
+    #volume = features.get('volume', 0)
+    #if volume > 0 and volume < 100:  # Minimum volume threshold
+    #    return False, "volume_too_low"
     
     # Optional: Check spread conditions
     bid = features.get('bidPrice', 0)
@@ -82,6 +82,8 @@ def meets_basic_buy_conditions(features: Dict, current_time: pd.Timestamp) -> Tu
             return False, "spread_too_wide"
     
     return True, "conditions_met"
+
+
 
 def evaluate_buy_signal(features: Dict, real_time_df: pd.DataFrame, intra_day_df: pd.DataFrame, daily_df: pd.DataFrame, full_intra_day_df: pd.DataFrame = None, max_time_window_minutes: int = 240) -> Dict:
     """
@@ -116,9 +118,9 @@ def evaluate_buy_signal(features: Dict, real_time_df: pd.DataFrame, intra_day_df
         return result
     
     # Check if we're too close to market close (30 minutes before)
-    if current_time.time() > CLOSE_CUTOFF:
-        result['reason'] = 'market_near_close'
-        return result
+    #if current_time.time() > CLOSE_CUTOFF:
+    #    result['reason'] = 'market_near_close'
+     #   return result
     
     # Get R-levels from features
     current_price = features['Current_Price']
@@ -160,6 +162,7 @@ def evaluate_buy_signal(features: Dict, real_time_df: pd.DataFrame, intra_day_df
     future_data['minute'] = future_data[time_col].dt.floor('min')
     future_prices = future_data.groupby('minute')[price_col].last()
     
+
     # Apply time window limit if specified
     if max_time_window_minutes > 0:
         max_time = current_time + pd.Timedelta(minutes=max_time_window_minutes)
@@ -176,6 +179,8 @@ def evaluate_buy_signal(features: Dict, real_time_df: pd.DataFrame, intra_day_df
     # Convert to numpy arrays for faster iteration
     timestamps = future_prices.index.to_numpy()
     prices = future_prices.values
+
+    max_time_window_minutes = 40
     
     for i in range(len(prices)):
         price = prices[i]
@@ -185,9 +190,9 @@ def evaluate_buy_signal(features: Dict, real_time_df: pd.DataFrame, intra_day_df
         if max_time_window_minutes > 0 and minutes_elapsed > max_time_window_minutes:
             break
         
-        # Check if we hit stop loss (-1R)
-        if price <= stop_loss:
-            result['reason'] = 'reached_negative_1r'
+        # Check if we hit stop loss (-1R), if already reached max_r_achieved ignore
+        if max_r_achieved == 0 and price <= stop_loss:
+            result['reason'] = f'reached_negative_1r'
             return result
         
         # Check R-levels achieved
@@ -202,10 +207,17 @@ def evaluate_buy_signal(features: Dict, real_time_df: pd.DataFrame, intra_day_df
             max_r_achieved = 2
             time_to_target = minutes_elapsed
         
-        # Stop if we're close to market close
-        if pd.Timestamp(timestamps[i]).time() >= CLOSE_CUTOFF:
-            break
     
+        # Determine final result
+        if max_r_achieved >= 3:
+            # Successfully reached at least 2R without hitting stop
+            result['buy'] = True
+            result['R'] = max_r_achieved
+            result['time_minutes'] = int(time_to_target)
+            result['reason'] = f'reached_{max_r_achieved}r_success'
+            return result
+
+
     # Determine final result
     if max_r_achieved >= 2:
         # Successfully reached at least 2R without hitting stop
@@ -213,14 +225,14 @@ def evaluate_buy_signal(features: Dict, real_time_df: pd.DataFrame, intra_day_df
         result['R'] = max_r_achieved
         result['time_minutes'] = int(time_to_target)
         result['reason'] = f'reached_{max_r_achieved}r_success'
-    else:
-        # Neither reached 2R nor hit stop
-        if max_time_window_minutes > 0 and len(prices) > 0 and (timestamps[-1] - current_time).total_seconds() / 60 >= max_time_window_minutes:
-            result['reason'] = 'timeout_no_2r'
-        else:
-            result['reason'] = 'end_of_day_no_2r'
+        return result
+
+    
+    result['reason'] = 'timeout_no_2r'
     
     return result
+
+
 
 def evaluate_all_buy_signals_batch(features_df: pd.DataFrame, intra_day_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
     """

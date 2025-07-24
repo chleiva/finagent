@@ -94,10 +94,16 @@ def load_data_optimized(filepath, chunksize=100000):
 def treat_outliers(X, outlier_percentile=0.005):
     X_out = X.copy()
     for col in X_out.columns:
-        z_scores = np.abs(stats.zscore(X_out[col].astype(float)))
-        extreme_outliers = (z_scores > 4).sum()
-        if extreme_outliers > 5:
-            X_out[col] = winsorize(X_out[col], limits=(outlier_percentile, outlier_percentile))
+        # Only process numeric columns
+        if pd.api.types.is_numeric_dtype(X_out[col]):
+            try:
+                z_scores = np.abs(stats.zscore(X_out[col].astype(float)))
+                extreme_outliers = (z_scores > 4).sum()
+                if extreme_outliers > 5:
+                    X_out[col] = winsorize(X_out[col], limits=(outlier_percentile, outlier_percentile))
+            except (ValueError, TypeError):
+                # Skip columns that can't be converted to float
+                continue
     return X_out
 
 def impute_missing(X):
@@ -109,16 +115,36 @@ def impute_missing(X):
     return X_out
 
 def remove_low_variance_features(X, threshold=0.001):
-    return X.loc[:, X.var() >= threshold]
+    # Only process numeric columns
+    numeric_cols = X.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) == 0:
+        return X
+    
+    # Calculate variance only for numeric columns
+    variances = X[numeric_cols].var()
+    high_variance_cols = variances[variances >= threshold].index.tolist()
+    
+    # Return only numeric columns with high variance, plus any non-numeric columns
+    non_numeric_cols = X.select_dtypes(exclude=[np.number]).columns
+    final_cols = list(high_variance_cols) + list(non_numeric_cols)
+    
+    return X[final_cols]
 
 def ensemble_feature_ranking(X, y, top_n=20, random_state=42):
-    mi_scores = mutual_info_classif(X, y, random_state=random_state)
-    f_scores, _ = f_classif(X, y)
+    # Only use numeric columns for feature ranking
+    numeric_cols = X.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) == 0:
+        return [], pd.DataFrame()
+    
+    X_numeric = X[numeric_cols]
+    
+    mi_scores = mutual_info_classif(X_numeric, y, random_state=random_state)
+    f_scores, _ = f_classif(X_numeric, y)
     xgb = XGBClassifier(random_state=random_state, verbosity=0)
-    xgb.fit(X, y)
+    xgb.fit(X_numeric, y)
     xgb_importance = xgb.feature_importances_
     feature_rankings = pd.DataFrame({
-        'Feature': X.columns,
+        'Feature': numeric_cols,
         'MI_Score': mi_scores,
         'F_Score': f_scores,
         'XGB_Importance': xgb_importance
@@ -140,12 +166,18 @@ def ensemble_feature_ranking(X, y, top_n=20, random_state=42):
 def conservative_normalization(X):
     X_norm = X.copy()
     for col in X_norm.columns:
-        mean_val = X_norm[col].mean()
-        std_val = X_norm[col].std()
-        if std_val > 0:
-            lower_bound = mean_val - 3 * std_val
-            upper_bound = mean_val + 3 * std_val
-            X_norm[col] = np.clip(X_norm[col], lower_bound, upper_bound)
+        # Only process numeric columns
+        if pd.api.types.is_numeric_dtype(X_norm[col]):
+            try:
+                mean_val = X_norm[col].mean()
+                std_val = X_norm[col].std()
+                if std_val > 0:
+                    lower_bound = mean_val - 3 * std_val
+                    upper_bound = mean_val + 3 * std_val
+                    X_norm[col] = np.clip(X_norm[col], lower_bound, upper_bound)
+            except (ValueError, TypeError):
+                # Skip columns that can't be processed
+                continue
     return X_norm
 
 def intelligent_sampling(df, target='buy', target_size=200000, strategy='balanced', random_state=42):

@@ -1,3 +1,6 @@
+print(f"\n🧪 TESTING IMPORT 2:")
+
+
 #!/usr/bin/env python3
 """
 Stock Minute-by-Minute Feature Processor
@@ -15,8 +18,6 @@ from typing import Dict, List, Tuple
 import argparse
 from tqdm import tqdm
 import time as time_module
-import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor
 import psutil
 import gc
 import threading
@@ -24,6 +25,13 @@ from collections import defaultdict
 import glob
 from feature_optimizer import optimize_features
 from features_cleaner import clean_and_validate_features
+
+# Add the feature_engineering directory to the path
+sys.path.append(os.path.join(os.path.dirname(__file__)))
+from strict_higher_swing_lows import strict_higher_swing_lows
+from strict_higher_swing_lows import adaptive_higher_swing_lows
+print(f"✅ Import test: {strict_higher_swing_lows}")
+
 
 # Set threading env vars to 1 for true multiprocessing (must be set before any numpy/pandas import in workers)
 os.environ['OMP_NUM_THREADS'] = '1'
@@ -36,12 +44,7 @@ from features import calculate_features
 from extra_features import calculate_additional_features
 from buy_label import evaluate_buy_signal
 
-# Optimization functions
-def get_optimal_worker_count():
-    """Get optimal number of workers for Apple Silicon."""
-    total_cores = mp.cpu_count()
-    print(f"🔥 Detected {total_cores} cores, using {total_cores} workers")
-    return total_cores
+
 
 def set_high_priority():
     """Set high priority for the process."""
@@ -53,20 +56,7 @@ def set_high_priority():
     except Exception as e:
         print(f"⚠️  Couldn't set priority: {e}")
 
-def optimize_libraries():
-    """Set threading vars for numpy/pandas backend libraries."""
-    os.environ['OMP_NUM_THREADS'] = str(mp.cpu_count())
-    os.environ['MKL_NUM_THREADS'] = str(mp.cpu_count())
-    os.environ['NUMEXPR_NUM_THREADS'] = str(mp.cpu_count())
-    print(f"🔧 Optimized libraries for {mp.cpu_count()} threads")
 
-def optimize_memory():
-    """Free unused memory and check available RAM."""
-    gc.collect()
-    memory = psutil.virtual_memory()
-    print(f"💾 Available memory: {memory.available / (1024**3):.1f} GB")
-    if memory.percent > 80:
-        print("⚠️  High memory usage - consider closing other apps")
 
 def monitor_performance():
     """Run performance monitor in background."""
@@ -199,6 +189,7 @@ class StockMinuteProcessor:
         
         return sorted([str(date) for date in dates])
     
+
     def process_symbol_date(self, symbol: str, target_date: str) -> Tuple[List[Dict], Dict]:
         """
         Process a specific symbol for a specific date.
@@ -231,17 +222,20 @@ class StockMinuteProcessor:
         # Get unique minutes for the day
         minutes = self._get_minutes_for_day(symbol_intra_data)
 
-        # Filter out non-market hours
-        market_open = time(9, 30)   # 30 min after 9:30 open
-        market_close = time(16, 0)  # 1 hour before 4:00 close
-        
-        # Filter minutes to only include market hours where we can actually trade
+        # Filter out non-market hours - USING EDT TIME (same as swing detection)
+        market_open = time(9, 30)   # 09:30 EDT
+        market_close = time(15, 30)  # 15:30 EDT
+
+        # Convert minutes to EDT before filtering (same logic as swing detection)
         market_hours_minutes = []
         for minute_time in minutes:
-            minute_time_only = minute_time.time()
+            # Convert to EDT for comparison
+            minute_time_edt = minute_time.tz_convert('America/New_York')
+            minute_time_only = minute_time_edt.time()
+            
             if market_open <= minute_time_only <= market_close:
-                market_hours_minutes.append(minute_time)
-        
+                market_hours_minutes.append(minute_time)  # Keep original UTC time
+
         minutes = market_hours_minutes
         
         print(f"   ⏰ Processing {len(minutes)} minutes...")
@@ -249,6 +243,267 @@ class StockMinuteProcessor:
         features_list = []
         processed_count = 0
         error_count = 0
+
+        # ============================================================================
+        # DETECT STRICT HIGHER SWING LOWS AND FILTER MINUTES - FULL DEBUG VERSION
+        # ============================================================================
+
+        print(f"\n" + "="*80)
+        print(f"🔍 STARTING SWING LOW DETECTION DEBUG")
+        print(f"="*80)
+
+        swing_low_minutes = []
+
+        try:
+            print(f"📊 STEP 1: Preparing data for swing detection")
+            
+            # Prepare the intraday data for swing low detection
+            swing_detection_df = symbol_intra_data.copy()
+            print(f"   ✅ Copied symbol_intra_data: {swing_detection_df.shape}")
+            
+            # Check what columns we have
+            print(f"   📋 Available columns: {list(swing_detection_df.columns)}")
+            
+            # Ensure we have a datetime index
+            time_col = 'ts_event_clean' if 'ts_event_clean' in swing_detection_df.columns else 'timestamp'
+            print(f"   🕐 Using time column: {time_col}")
+            
+            if time_col in swing_detection_df.columns:
+                print(f"   📊 Before setting index - shape: {swing_detection_df.shape}")
+                print(f"   📊 Sample {time_col} values: {swing_detection_df[time_col].head().tolist()}")
+                swing_detection_df = swing_detection_df.set_index(time_col)
+                print(f"   ✅ Set datetime index: {swing_detection_df.shape}")
+            else:
+                print(f"   ❌ ERROR: No time column found!")
+                raise ValueError(f"No time column found in data")
+            
+            # Sort by time to ensure chronological order
+            swing_detection_df = swing_detection_df.sort_index()
+            print(f"   ✅ Sorted by time: {swing_detection_df.shape}")
+            
+            print(f"   📊 Index info:")
+            print(f"      - Type: {type(swing_detection_df.index)}")
+            print(f"      - Timezone: {swing_detection_df.index.tz}")
+            print(f"      - First timestamp: {swing_detection_df.index[0]}")
+            print(f"      - Last timestamp: {swing_detection_df.index[-1]}")
+            print(f"      - Total timespan: {swing_detection_df.index[-1] - swing_detection_df.index[0]}")
+            
+            print(f"\n📊 STEP 2: Filtering to market hours")
+            
+            # Show time range before filtering
+            print(f"   🕐 Time range before filtering:")
+            print(f"      - Earliest time: {swing_detection_df.index.min()}")
+            print(f"      - Latest time: {swing_detection_df.index.max()}")
+            print(f"      - Sample times: {swing_detection_df.index[:5].tolist()}")
+
+            # Convert to EDT before filtering market hours
+            swing_detection_df.index = swing_detection_df.index.tz_convert('America/New_York')
+            print(f"   🕐 Converted to EDT. Sample times: {swing_detection_df.index[:3].tolist()}")
+            
+            # SIMPLIFIED MARKET HOURS FILTERING
+            market_hours_mask = (
+                (swing_detection_df.index.time >= pd.to_datetime("09:30").time()) &
+                (swing_detection_df.index.time <= pd.to_datetime("15:30").time())
+            )
+            
+            print(f"   📊 Market hours mask:")
+            print(f"      - True count: {market_hours_mask.sum()}")
+            print(f"      - False count: {(~market_hours_mask).sum()}")
+            print(f"      - Total: {len(market_hours_mask)}")
+            
+            swing_detection_df = swing_detection_df[market_hours_mask]
+            print(f"   ✅ After market hours filter: {swing_detection_df.shape}")
+            
+            if swing_detection_df.empty:
+                print(f"   ❌ ERROR: No data after market hours filtering!")
+                raise ValueError("No data after market hours filtering")
+            
+            print(f"   🕐 Time range after filtering:")
+            print(f"      - Earliest time: {swing_detection_df.index.min()}")
+            print(f"      - Latest time: {swing_detection_df.index.max()}")
+            
+            print(f"\n📊 STEP 3: Finding price column")
+            
+            # Determine price column (try common variations)
+            price_col = None
+            available_cols = list(swing_detection_df.columns)
+            print(f"   📋 Available columns after filtering: {available_cols}")
+            
+            for col_candidate in ['close_1min', 'close', 'lastPrice', 'price']:
+                if col_candidate in swing_detection_df.columns:
+                    price_col = col_candidate
+                    print(f"   ✅ Found price column: {price_col}")
+                    break
+                else:
+                    print(f"   ❌ Price column '{col_candidate}' not found")
+            
+            if price_col is None:
+                print(f"   ❌ CRITICAL ERROR: No suitable price column found!")
+                print(f"   📊 Available columns: {available_cols}")
+                print(f"   📊 Proceeding with all minutes (no swing low filtering)")
+                swing_low_minutes = minutes
+            else:
+                print(f"   ✅ Using price column: {price_col}")
+                
+                # Show price data stats
+                price_data = swing_detection_df[price_col]
+                print(f"   📊 Price data stats:")
+                print(f"      - Count: {len(price_data)}")
+                print(f"      - Min: {price_data.min():.2f}")
+                print(f"      - Max: {price_data.max():.2f}")
+                print(f"      - Mean: {price_data.mean():.2f}")
+                print(f"      - First 5 values: {price_data.head().tolist()}")
+                print(f"      - Last 5 values: {price_data.tail().tolist()}")
+                
+                print(f"\n📊 STEP 4: Checking for VWAP calculation")
+                
+                # Calculate VWAP if needed columns exist
+                vwap_col = None
+                required_vwap_cols = ['high_1min', 'low_1min', 'volume_1min']
+                missing_vwap_cols = [col for col in required_vwap_cols if col not in swing_detection_df.columns]
+                
+                if missing_vwap_cols:
+                    print(f"   ⚠️  Missing VWAP columns: {missing_vwap_cols}")
+                    print(f"   📊 Proceeding without VWAP filter")
+                else:
+                    print(f"   ✅ All VWAP columns found: {required_vwap_cols}")
+                    # Calculate VWAP
+                    typical_price = (swing_detection_df['high_1min'] + swing_detection_df['low_1min'] + swing_detection_df[price_col]) / 3
+                    vwap_numerator = (swing_detection_df['volume_1min'] * typical_price).cumsum()
+                    vwap_denominator = swing_detection_df['volume_1min'].cumsum()
+                    swing_detection_df['vwap'] = vwap_numerator / vwap_denominator
+                    vwap_col = 'vwap'
+                    print(f"   ✅ Calculated VWAP - sample values: {swing_detection_df['vwap'].head().tolist()}")
+                
+                
+                # This is the critical call - let's see what happens
+                print("\n🔍 DETECTING STRICT HIGHER SWING LOWS...")
+                strict_swing_lows_df = strict_higher_swing_lows(
+                    swing_detection_df,
+                    price_col=price_col,
+                    window=4,
+                    max_gap_minutes=40,
+                    vwap_col=vwap_col,
+                    vwap_tolerance=5,
+                    debug=False  # This should show detailed detection process
+                )
+
+                print("\n🔍 DETECTING ADAPTIVE HIGHER SWING LOWS...")
+                adaptive_swing_lows_df = adaptive_higher_swing_lows(
+                    swing_detection_df,
+                    price_col=price_col,
+                    window=4,
+                    max_gap_minutes=40,
+                    vwap_col=vwap_col,
+                    vwap_tolerance=5,
+                    debug=False  # This should show detailed detection process
+                )
+
+
+                # Merge results from both methods
+                print("\n📊 MERGING RESULTS FROM BOTH METHODS...")
+                all_swing_lows_df = pd.DataFrame()
+
+                if not strict_swing_lows_df.empty:
+                    strict_copy = strict_swing_lows_df.copy()
+                    strict_copy['detection_method'] = 'strict'
+                    all_swing_lows_df = pd.concat([all_swing_lows_df, strict_copy])
+                    
+                if not adaptive_swing_lows_df.empty:
+                    adaptive_copy = adaptive_swing_lows_df.copy()
+                    adaptive_copy['detection_method'] = 'adaptive'
+                    all_swing_lows_df = pd.concat([all_swing_lows_df, adaptive_copy])
+                
+                     
+                if not all_swing_lows_df.empty:
+                    print(f"   ✅ SUCCESS: Found {len(all_swing_lows_df)} swing lows!")
+                    print(f"   🎯 Swing low timestamps:")
+                    for i, timestamp in enumerate(all_swing_lows_df.index):
+                        price = all_swing_lows_df[price_col].iloc[i]
+                        print(f"      {i+1}. {timestamp} - Price: {price:.2f}")
+                    
+
+                    # Convert swing low timestamps to minute timestamps
+                    swing_low_times = all_swing_lows_df.index
+                    swing_low_minutes = []
+                    
+                    for i, swing_time in enumerate(swing_low_times):
+                        # Convert swing time back to UTC to match the minutes list timezone
+                        swing_time_utc = swing_time.tz_convert('UTC')
+                        rounded_minute_utc = swing_time_utc.floor('min')
+                        
+                        print(f"   🎯 Processing swing low {i+1}: {swing_time} (EDT) -> {swing_time_utc} (UTC) -> {rounded_minute_utc}")
+                        
+                        # Find the closest minute in our original minutes list (which is in UTC)
+                        time_diffs = [abs((x - rounded_minute_utc).total_seconds()) for x in minutes]
+                        min_diff_idx = time_diffs.index(min(time_diffs))
+                        closest_minute = minutes[min_diff_idx]
+                        min_diff = min(time_diffs)
+                        
+                        print(f"      - Closest minute: {closest_minute}")
+                        print(f"      - Time difference: {min_diff} seconds")
+                        
+                        # Only add if it's within 1 minute
+                        if min_diff <= 60:
+                            swing_low_minutes.append(closest_minute)
+                            print(f"      ✅ ADDED to processing list")
+                        else:
+                            print(f"      ❌ TOO FAR - not added")
+                    
+                    # Remove duplicates and sort
+                    swing_low_minutes = sorted(list(set(swing_low_minutes)))
+                    
+                    print(f"\n📊 STEP 8: Final results")
+                    print(f"   🎯 Original swing lows detected: {len(strict_swing_lows_df)}")
+                    print(f"   ⏰ Mapped to unique minutes: {len(swing_low_minutes)}")
+                    print(f"   🎯 Final swing low minutes: {swing_low_minutes}")
+                    
+                    if len(swing_low_minutes) == 0:
+                        print(f"   ❌ WARNING: No swing low minutes mapped successfully!")
+                        print(f"   📊 Using all minutes as fallback")
+                        #swing_low_minutes = minutes
+                    else:
+                        print(f"   ✅ SUCCESS: Will process {len(swing_low_minutes)} minutes instead of {len(minutes)}")
+                else:
+                    print(f"   ❌ No strict higher swing lows detected")
+                    print(f"   📊 Using all minutes")
+                    #swing_low_minutes = minutes
+                    
+        except Exception as e:
+            print(f"\n❌ ERROR during swing low detection:")
+            print(f"   Error type: {type(e).__name__}")
+            print(f"   Error message: {e}")
+            print(f"   Error occurred at line: {e.__traceback__.tb_lineno}")
+            import traceback
+            print(f"   Full traceback:")
+            traceback.print_exc()
+            print(f"   📊 Proceeding with all minutes (no swing low filtering)")
+            swing_low_minutes = minutes
+            
+            # 🚨 FORCE STOP TO DEBUG
+            print(f"🚨 STOPPING FOR DEBUG - Exception in swing detection!")
+            raise e  # Re-raise the exception to see what's actually failing
+
+
+        print(f"\n" + "="*80)
+        print(f"🎯 SWING LOW DETECTION COMPLETE")
+        print(f"📊 Original minutes: {len(minutes)}")
+        print(f"📊 Final minutes: {len(swing_low_minutes)}")
+        print(f"📊 Reduction: {len(minutes) - len(swing_low_minutes)} minutes filtered out")
+        print(f"="*80)
+
+
+        # ADD THIS SECTION HERE (replace the next line)
+        if swing_low_minutes:
+            minutes = swing_low_minutes
+            print(f"🎯 Using {len(swing_low_minutes)} swing low minutes")
+        else:
+            print(f"🎯 No swing lows found - processing 0 minutes")
+            minutes = []  # Process no minutes
+                
+        # ============================================================================
+        # PROCESS EACH MINUTE (NOW FILTERED TO SWING LOWS ONLY)
+        # ============================================================================
         
         # Process each minute
         for minute_time in tqdm(minutes, desc=f"   Processing {symbol}", leave=False):
@@ -258,12 +513,16 @@ class StockMinuteProcessor:
                 intra_day_df = self._create_intra_day_df(symbol_intra_data, minute_time)
                 daily_df = symbol_daily_data.copy()
 
-                # Ensure no future bias
+                print(f"   📊 real_time_df shape: {real_time_df.shape}")
+                print(f"   📊 intra_day_df shape: {intra_day_df.shape}")
+                print(f"   📊 daily_df shape: {daily_df.shape}")
+
+                        # Ensure no future bias
                 time_col = 'ts_event_clean' if 'ts_event_clean' in intra_day_df.columns else 'timestamp'
                 
                 # Double-check to make sure no future data is included in intra_day_df
                 if time_col in intra_day_df.columns:
-                    intra_day_df = intra_day_df[intra_day_df[time_col].dt.floor('min') < minute_time]
+                    intra_day_df = intra_day_df[intra_day_df[time_col].dt.floor('min') <= minute_time]
                 
                 # Ensure daily_df only contains data up to the day before current date
                 # Ensure daily_df only contains data up to the day before current date, 
@@ -346,8 +605,8 @@ class StockMinuteProcessor:
                 #features['volume'] = real_time_df['volume'].iloc[0]
                 
                 # Add metadata
-                #features['symbol'] = symbol
-                #features['timestamp'] = minute_time
+                features['symbol'] = symbol
+                features['timestamp'] = minute_time
                 #features['date'] = target_date
 
                 # Evaluate buy signal (using full data to see future)
@@ -358,7 +617,6 @@ class StockMinuteProcessor:
                     daily_df,
                     full_symbol_intra_data_danger_zone_biased  # Full unfiltered data for future price lookup
                 )
-
 
                 # Define valid reasons (same as your analysis)
                 valid_reasons = {
@@ -372,20 +630,33 @@ class StockMinuteProcessor:
                 # Add signal results to features
                 features.update(signal_result)
 
+
                 # Check both conditions: sufficient data AND valid reason
-                if (len(intra_day_df) >= 15 and 
-                    signal_result.get('reason') in valid_reasons):
+                print(f"   🔍 Checking conditions:")
+                print(f"      - intra_day_df length: {len(intra_day_df)} >= 15? {len(intra_day_df) >= 15}")
+                print(f"      - signal reason: '{signal_result.get('reason')}' in valid_reasons? {signal_result.get('reason') in valid_reasons}")
+                print(f"      - valid_reasons: {valid_reasons}")
+                
+        
+
+                # Check both conditions: sufficient data AND valid reason
+                if (len(intra_day_df) >= 15):
                     
                     # 🧹 STEP 1: Clean and validate features first
                     cleaned_features = clean_and_validate_features(features)
                     
                     # 🚀 STEP 2: Optimize the clean features
                     optimized_features = optimize_features(cleaned_features, intra_day_df=intra_day_df)
-    
+
                     features_list.append(optimized_features)
                     processed_count += 1
+                    print(f"   ✅ FEATURE ADDED! Total processed: {processed_count}")
+                else:
+                    print(f"   ❌ CONDITIONS NOT MET - Skipping this minute")
+                    print(f"      Reason: intra_day_df too small OR invalid signal reason")
 
-                
+
+                        
             except Exception as e:
                 error_count += 1
                 print(f"   ⚠️  Error processing minute {minute_time}: {e}")
@@ -403,7 +674,10 @@ class StockMinuteProcessor:
         print(f"   ✅ Successfully processed {processed_count}/{len(minutes)} minutes ({summary_stats['success_rate']:.1f}%)")
         
         return features_list, summary_stats
-    
+
+
+
+
     def _filter_intra_data(self, symbol: str, target_date) -> pd.DataFrame:
         """Filter intraday data for symbol and date."""
         # Filter by symbol
@@ -542,75 +816,6 @@ class StockMinuteProcessor:
         
         print("="*60)
 
-def process_symbol_all_dates(args_tuple):
-    """
-    Process all dates for a single symbol, saving monthly files.
-    This function will run in a separate process.
-    """
-    symbol, intraday_data, daily_data, overwrite = args_tuple
-    
-    # Create a processor instance with pre-loaded data
-    processor = StockMinuteProcessor("", "")
-    processor.intra_day_data = intraday_data
-    processor.daily_data = daily_data
-    
-    # Process timestamps
-    processor._process_timestamps()
-    
-    dates = processor.get_available_dates(symbol)
-    print(f"🔄 Process {os.getpid()}: Processing {symbol} ({len(dates)} dates)")
-    
-    # Group dates by month
-    monthly_dates = defaultdict(list)
-    
-    for date_str in dates:
-        date_obj = pd.to_datetime(date_str).date()
-        month_key = f"{date_obj.year}-{date_obj.month:02d}"
-        monthly_dates[month_key].append(date_str)
-    
-    print(f"   📅 Found {len(monthly_dates)} months for {symbol}")
-    
-    symbol_summaries = []
-    total_features = 0
-    skipped_months = 0
-    
-    # Process each month separately
-    for month_key, month_dates in monthly_dates.items():
-        # Check if monthly file already exists
-        monthly_file = f"monthly_{symbol}_{month_key}.csv"
-        if os.path.exists(monthly_file) and not overwrite:
-            print(f"   🔄 Skipping {symbol} - {month_key}: File already exists and --overwrite not specified")
-            skipped_months += 1
-            continue
-            
-        print(f"   🗓️  Processing {symbol} - {month_key} ({len(month_dates)} days)")
-        
-        month_features = []
-        month_summaries = []
-        
-        # Process all dates in this month
-        for date in month_dates:
-            try:
-                features_list, summary = processor.process_symbol_date(symbol, date)
-                month_summaries.append(summary)
-                month_features.extend(features_list)
-            except Exception as e:
-                print(f"❌ Process {os.getpid()}: Error processing {symbol} on {date}: {e}")
-        
-        # Save monthly file immediately
-        if month_features:
-            temp_processor = StockMinuteProcessor("", "")
-            temp_processor.save_features(month_features, monthly_file)
-            print(f"   💾 Monthly file saved: {monthly_file} ({len(month_features)} features)")
-            
-            total_features += len(month_features)
-            symbol_summaries.extend(month_summaries)
-    
-    if skipped_months > 0:
-        print(f"✅ Process {os.getpid()}: {symbol} - Skipped {skipped_months} months as files already exist")
-    
-    print(f"✅ Process {os.getpid()}: Completed {symbol} - {total_features} total features across {len(monthly_dates) - skipped_months} months")
-    return symbol, total_features, symbol_summaries, skipped_months
 
 def merge_monthly_files(pattern="monthly_*.csv", output="merged_features.csv"):
     """
@@ -757,8 +962,7 @@ def main():
     """Main function to run the stock minute processor."""
     # Apply optimizations first
     set_high_priority()
-    optimize_libraries() 
-    optimize_memory()
+
     
     parser = argparse.ArgumentParser(description="Process stock data minute by minute")
     parser.add_argument("--symbol", "-s", type=str, help="Stock symbol to process")
@@ -811,6 +1015,7 @@ def main():
             print(f"  - {date}")
         return
     
+
     # Handle process all command
     if args.all:
         symbols = processor.get_symbols()
@@ -818,114 +1023,67 @@ def main():
         
         start_time = time_module.time()
         
-        if args.parallel:
-            # Optimized parallel processing
-            num_cores = mp.cpu_count() if args.num_workers is None else args.num_workers
-            print(f"🏃‍♂️ Using {num_cores} process(es) (OMP/MKL/NUMEXPR threads per process: 1)")
-            print(f"📊 Loading data once and sharing across processes...")
-            
-            # Load data once in main process
-            intraday_data = processor.intra_day_data.copy()
-            daily_data = processor.daily_data.copy()
-            
-            print(f"   ✅ Data loaded: {len(intraday_data):,} intraday + {len(daily_data):,} daily records")
-            
-            # Prepare arguments for each symbol
-            symbol_args = [(symbol, intraday_data, daily_data, args.overwrite) for symbol in symbols]
-            
-            all_summaries = []
-            total_features_processed = 0
-            
-            # Process symbols in parallel - each creates monthly files
-            with ProcessPoolExecutor(max_workers=num_cores) as executor:
-                results = list(executor.map(process_symbol_all_dates, symbol_args))
-            
-            # Collect summary statistics
-            for symbol, feature_count, summaries, skipped_months in results:
-                total_features_processed += feature_count
-                all_summaries.extend(summaries)
-            
-            processing_time = time_module.time() - start_time
-            
-            # Calculate total skipped months
-            total_skipped_months = sum(result[3] for result in results)
-            
-            print(f"\n🎉 All processing complete!")
-            print(f"📊 Total features processed: {total_features_processed:,}")
-            print(f"🔄 Total months skipped (files already exist): {total_skipped_months}")
-            print(f"⏱️  Total time: {processing_time:.2f} seconds")
-            print(f"⚡ Features per second: {total_features_processed/processing_time:.0f}")
-            print(f"📁 Monthly files created - use merge_monthly_files() to combine")
-            
-            # Auto-merge if requested
-            if args.output:
-                print(f"\n🔄 Auto-merging monthly files...")
-                merge_monthly_files(output=args.output)
-            else:
-                print(f"\n💡 To merge all monthly files later, run:")
-                print(f"   python -c \"from stock_minute_processor import merge_monthly_files; merge_monthly_files()\"")
-            
-            return
+        # Sequential processing only
+        all_summaries = []
+        total_features_processed = 0
+        skipped_months = 0
+        symbols_processed = 0
         
-        else:
-            # Sequential processing (original, now improved)
-            all_summaries = []
-            total_features_processed = 0
-            skipped_months = 0
-            symbols_processed = 0
+        for symbol in symbols:
+            dates = processor.get_available_dates(symbol)
+            print(f"\n📊 Processing {symbol} ({len(dates)} dates)")
             
-            for symbol in symbols:
-                dates = processor.get_available_dates(symbol)
-                print(f"\n📊 Processing {symbol} ({len(dates)} dates)")
-                
-                # Group dates by month
-                monthly_dates = defaultdict(list)
-                for date_str in dates:
-                    date_obj = pd.to_datetime(date_str).date()
-                    month_key = f"{date_obj.year}-{date_obj.month:02d}"
-                    monthly_dates[month_key].append(date_str)
-                print(f"   📅 Found {len(monthly_dates)} months for {symbol}")
-                
-                for month_key, month_dates in monthly_dates.items():
-                    monthly_file = f"monthly_{symbol}_{month_key}.csv"
-                    if os.path.exists(monthly_file) and not args.overwrite:
-                        print(f"   🔄 Skipping {symbol} - {month_key}: File already exists and --overwrite not specified")
-                        skipped_months += 1
-                        continue
-                    print(f"   🗓️  Processing {symbol} - {month_key} ({len(month_dates)} days)")
-                    month_features = []
-                    month_summaries = []
-                    for date in month_dates:
-                        try:
-                            features_list, summary = processor.process_symbol_date(symbol, date)
-                            month_summaries.append(summary)
-                            month_features.extend(features_list)
-                        except Exception as e:
-                            print(f"❌ Error processing {symbol} on {date}: {e}")
-                    # Save monthly file immediately
-                    if month_features:
-                        temp_processor = StockMinuteProcessor("", "")
-                        temp_processor.save_features(month_features, monthly_file)
-                        print(f"   💾 Monthly file saved: {monthly_file} ({len(month_features)} features)")
-                        total_features_processed += len(month_features)
-                        all_summaries.extend(month_summaries)
-                symbols_processed += 1
-            processing_time = time_module.time() - start_time
-            print(f"\n🎉 All processing complete!")
-            print(f"📊 Total features processed: {total_features_processed:,}")
-            print(f"🔄 Total months skipped (files already exist): {skipped_months}")
-            print(f"⏱️  Total time: {processing_time:.2f} seconds")
-            print(f"⚡ Features per second: {total_features_processed/processing_time:.0f}" if processing_time > 0 else "N/A")
-            print(f"📁 Monthly files created - use merge_monthly_files() to combine")
-            # Auto-merge if requested
-            if args.output:
-                print(f"\n🔄 Auto-merging monthly files...")
-                merge_monthly_files(output=args.output)
-            else:
-                print(f"\n💡 To merge all monthly files later, run:")
-                print(f"   python -c \"from stock_minute_processor import merge_monthly_files; merge_monthly_files()\"")
-            return
-    
+            # Group dates by month
+            monthly_dates = defaultdict(list)
+            for date_str in dates:
+                date_obj = pd.to_datetime(date_str).date()
+                month_key = f"{date_obj.year}-{date_obj.month:02d}"
+                monthly_dates[month_key].append(date_str)
+            print(f"   📅 Found {len(monthly_dates)} months for {symbol}")
+            
+            for month_key, month_dates in monthly_dates.items():
+                monthly_file = f"monthly_{symbol}_{month_key}.csv"
+                if os.path.exists(monthly_file) and not args.overwrite:
+                    print(f"   🔄 Skipping {symbol} - {month_key}: File already exists and --overwrite not specified")
+                    skipped_months += 1
+                    continue
+                print(f"   🗓️  Processing {symbol} - {month_key} ({len(month_dates)} days)")
+                month_features = []
+                month_summaries = []
+                for date in month_dates:
+                    try:
+                        # This calls your swing detection method directly!
+                        features_list, summary = processor.process_symbol_date(symbol, date)
+                        month_summaries.append(summary)
+                        month_features.extend(features_list)
+                    except Exception as e:
+                        print(f"❌ Error processing {symbol} on {date}: {e}")
+                # Save monthly file immediately
+                if month_features:
+                    processor.save_features(month_features, monthly_file)
+                    print(f"   💾 Monthly file saved: {monthly_file} ({len(month_features)} features)")
+                    total_features_processed += len(month_features)
+                    all_summaries.extend(month_summaries)
+            symbols_processed += 1
+            
+        processing_time = time_module.time() - start_time
+        print(f"\n🎉 All processing complete!")
+        print(f"📊 Total features processed: {total_features_processed:,}")
+        print(f"🔄 Total months skipped (files already exist): {skipped_months}")
+        print(f"⏱️  Total time: {processing_time:.2f} seconds")
+        print(f"⚡ Features per second: {total_features_processed/processing_time:.0f}" if processing_time > 0 else "N/A")
+        print(f"📁 Monthly files created - use merge_monthly_files() to combine")
+        
+        # Auto-merge if requested
+        if args.output:
+            print(f"\n🔄 Auto-merging monthly files...")
+            merge_monthly_files(output=args.output)
+        else:
+            print(f"\n💡 To merge all monthly files later, run:")
+            print(f"   python -c \"from stock_minute_processor import merge_monthly_files; merge_monthly_files()\"")
+        return
+
+
     # Validate required arguments for single symbol/date processing
     if not args.symbol:
         print("❌ Symbol is required. Use --list-symbols to see available symbols or --all to process everything.")
